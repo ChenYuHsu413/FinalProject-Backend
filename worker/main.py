@@ -1,8 +1,10 @@
 """arq worker entrypoint: ``arq worker.main.WorkerSettings``.
 
-Batch 2 registers the hourly audit-chain re-verification (and a boot-time run so
-the VERIFIED badge is populated immediately). Later batches add command-timeout
-scanning, data cleanup, and the mock scheduler here.
+Runs the hourly audit-chain re-verification (batch 2) and the mock simulator's
+scheduled event publishing (batch 3, per 後端資料規格書 §十三). On startup it also
+generates the engine data files (MOCK_MODE) so the read endpoints have data
+immediately, and verifies the audit chain once. Later batches add command-timeout
+scanning and data cleanup here.
 """
 
 from __future__ import annotations
@@ -11,13 +13,24 @@ from typing import Any
 
 from app.core.db import dispose_engine
 from app.core.settings import get_settings
+from app.mock.simulator import MockSimulator
 from arq import cron
 from arq.connections import RedisSettings
 
-from worker.tasks import reverify_audit_chain
+from worker.tasks import (
+    reverify_audit_chain,
+    sim_fallback_event,
+    sim_l1_summary,
+    sim_l2_finetune,
+    sim_shap_diagnosis,
+)
 
 
 async def _on_startup(ctx: dict[str, Any]) -> None:
+    settings = get_settings()
+    # Generate the engine file tree so read endpoints have data at boot.
+    if settings.mock_mode:
+        MockSimulator(settings.engine_data_dir).generate_all()
     # Verify once at boot so /audit/chain/verify has a fresh result to serve.
     await reverify_audit_chain(ctx)
 
@@ -31,9 +44,25 @@ def _redis_settings() -> RedisSettings:
 
 
 class WorkerSettings:
-    functions = [reverify_audit_chain]
-    # Re-verify at the top of every hour (PROMPT §4: 稽核鏈重驗每小時).
-    cron_jobs = [cron(reverify_audit_chain, minute=0)]
+    functions = [
+        reverify_audit_chain,
+        sim_l1_summary,
+        sim_l2_finetune,
+        sim_fallback_event,
+        sim_shap_diagnosis,
+    ]
+    # Schedules per 後端資料規格書 §十三 (mock simulator + audit re-verify):
+    cron_jobs = [
+        cron(reverify_audit_chain, minute=0),  # hourly (PROMPT §4)
+        cron(sim_l1_summary, second=set(range(60))),  # 1s L1 summary
+        cron(sim_l2_finetune, second={0}),  # 1min L2 finetune
+        cron(
+            sim_fallback_event, minute=set(range(0, 60, 5)), second={0}
+        ),  # event-type (mock: 5min)
+        cron(
+            sim_shap_diagnosis, minute=set(range(0, 60, 5)), second={30}
+        ),  # event-type (mock: 5min)
+    ]
     on_startup = _on_startup
     on_shutdown = _on_shutdown
     redis_settings = _redis_settings()

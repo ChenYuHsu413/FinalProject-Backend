@@ -293,3 +293,52 @@ was fixed):
    responses (content-type conformance); the validation error handler could 500
    while serializing a pydantic `ctx` exception object (added `_json_safe` in
    `errors.py`).
+
+---
+
+## Batch 3 — 引擎層唯讀端點 + mock simulator
+
+### D3.1 scenario_id validation is the path-traversal guard
+
+Scenario ids are long-form only (PROMPT §3 #5). `EngineFileRepository` validates
+`is_wellformed_scenario` (strict `^\d{2}_[A-Za-z0-9_]+$`, no `/`/`.`/`..`) **before**
+assembling any path, so an arbitrary string can never traverse the filesystem
+(acceptance #3). Unknown / malformed scenario → `EngineDataNotFound` → documented
+404. Active set is `01_Pick_and_Place` / `18_Ball_Screw` / `34_Rotor_Demag`.
+
+### D3.2 Missing engine data is a 404, never a 500
+
+A missing file under `ENGINE_DATA_DIR` (simulator hasn't produced it / scenario
+untrained) is normal (acceptance #2): the repo raises `EngineDataNotFound`, a
+single app-level handler maps it to the unified 404 envelope, and every engine
+router declares 404 in its OpenAPI (`NOT_FOUND_RESPONSES`) so schemathesis'
+status-code conformance accepts it. schemathesis hitting endpoints with no data /
+random scenarios therefore gets documented 404s, not 500s.
+
+### D3.3 Fallback events stored as JSONL in the mock
+
+`/fallback/events` and `/fallback/stats` read a JSONL file (`fallback_events.jsonl`)
++ per-scenario stats JSON. The SQLite hash-chained fallback log of 後端資料規格書
+§五 is engine-layer and **deferred** (PROMPT §3 #2 keeps it as engine concern);
+the mock's JSONL is enough for the read endpoints' output fidelity. Swapping in the
+real SQLite source later touches only `EngineFileRepository`.
+
+### D3.4 Simulator runs in the worker, not the API (acceptance #4)
+
+The mock simulator publishes events from **arq worker cron jobs** (§十三 cadence:
+`l1:summary` 1s, `l2:finetune` 1min, `fallback`/`shap` event-type at 5min in mock)
+and generates the engine file tree on worker startup — **not** an API lifespan
+task. The API stays stateless; a simulator crash cannot take down API serving.
+All events use the §11 envelope (`EventPublisher` + `make_envelope`); tests use
+fakeredis. `MOCK_MODE=false` disables it (prod). FastAPI only publishes to Redis
+and never opens a browser WebSocket (PROMPT §3 #3).
+
+### D3.5 Output fidelity is enforced by response models
+
+Engine responses use pydantic response models whose field names mirror 後端資料
+規格書 §二/§七/§八/§九/§十 exactly (acceptance #1). FastAPI serializes only the
+declared fields, so responses cannot drift from the spec that the Flask normalizer
+depends on. Deeply nested / variable blobs (L3 pools, SHAP force plots) are typed
+`dict`/`list` to pass through faithfully while keeping their container field names
+exact. Engine reads require `dashboard.read` (all roles) — L3 uses `model.read` —
+enforced via `require_permission`, on top of the service token.

@@ -22,7 +22,7 @@ does, over a service token.
 > `"mock_mode": true` (from batch 3). HTTP 200/202 never means "the device did
 > it" — commands can end in `timeout` (batch 6).
 
-## Status — batch 2 of 8 done (稽核子系統)
+## Status — batch 3 of 8 done (引擎層唯讀端點 + mock simulator)
 
 Implemented so far (PROMPT §5):
 
@@ -37,9 +37,16 @@ design-backend §5.1), 3-layer append-only protection in an Alembic migration
 worker hourly re-verify, and failed-attempt (`authz.denied`) auditing at the
 trust boundary. All mutations flow through the audit service.
 
-Not yet implemented (later batches): engine read endpoints + simulator,
-snapshot/trends, alarms, commands, approvals/training, retention, deployment
-hardening. See `docs/DECISIONS.md` for per-batch rulings.
+**Batch 3 — 引擎層唯讀端點 + mock simulator:** all engine GET endpoints
+(後端資料規格書 §二/§七/§八/§九/§十) reading spec-shaped files under
+`ENGINE_DATA_DIR` via an interface-first file repository (missing data → 404,
+scenario ids path-validated); event envelope (§11) + Redis channels (§3.2); the
+mock simulator generates the files and publishes enveloped events on the worker's
+§十三 schedule. Swapping in the real pipeline touches only the file repository +
+simulator.
+
+Not yet implemented (later batches): snapshot/trends, alarms, commands,
+approvals/training, retention, deployment hardening. See `docs/DECISIONS.md`.
 
 ## Endpoints
 
@@ -51,6 +58,20 @@ hardening. See `docs/DECISIONS.md` for per-batch rulings.
 | GET | `/api/v1/audit/events` | `audit.read` (operator → own only) |
 | GET | `/api/v1/audit/chain/verify` | `audit.read` |
 | GET | `/api/v1/audit/export` | `audit.export` (admin) |
+| GET | `/api/v1/l1/{realtime,latency,model}` | `dashboard.read` |
+| GET | `/api/v1/l2/{latest,trend}` | `dashboard.read` |
+| GET | `/api/v1/l3/{latest,shadow,models}` | `model.read` |
+| GET | `/api/v1/shap/{diagnosis,summary}` | `dashboard.read` |
+| GET | `/api/v1/fallback/{events,stats}` | `dashboard.read` |
+| GET | `/api/v1/scenarios`, `/scenario-library` | `dashboard.read` |
+| GET | `/api/v1/residual/status` | `dashboard.read` |
+| GET | `/api/v1/ensemble/status` | `dashboard.read` |
+| GET | `/api/v1/control-mode` | `dashboard.read` |
+| GET | `/api/v1/data-lifecycle` | `dashboard.read` |
+
+Engine endpoints read files under `ENGINE_DATA_DIR`; missing data / unknown
+scenario → documented **404**. In `MOCK_MODE` the worker generates the files and
+publishes events (channels `ai_servo:*`, §11 envelope).
 
 ## Database & worker
 
