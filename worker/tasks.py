@@ -18,11 +18,15 @@ def _publisher(ctx: dict[str, Any]) -> EventPublisher:
 
 
 async def sim_l1_summary(ctx: dict[str, Any]) -> None:
-    if not get_settings().mock_mode:
+    settings = get_settings()
+    if not settings.mock_mode:
         return
     pub = _publisher(ctx)
+    sim = simulator.MockSimulator(settings.engine_data_dir)
     for scenario in ACTIVE_SCENARIOS:
         await simulator.publish_l1_summary(pub, scenario)
+        # Refresh the polling file so GET /l1/realtime also moves (not just the WS event).
+        sim.write_l1_realtime(scenario)
 
 
 async def sim_l2_finetune(ctx: dict[str, Any]) -> None:

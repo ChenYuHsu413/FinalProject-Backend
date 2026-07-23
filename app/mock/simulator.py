@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.domain import timeseries as ts
 from app.domain.scenarios import ACTIVE_SCENARIOS, SCENARIO_LIBRARY_SIZE
 from app.events import channels
 from app.events.publisher import EventPublisher
@@ -23,6 +24,7 @@ def _now_iso() -> str:
 
 # --- per-scenario file builders ---------------------------------------------
 def _l1_realtime(s: str) -> dict[str, Any]:
+    dv = ts.current_value("dv", s)  # moving value (batch-4 observation #1)
     return {
         "level": "L1",
         "type": "summary_1s",
@@ -30,7 +32,7 @@ def _l1_realtime(s: str) -> dict[str, Any]:
         "scenario_id": s,
         "samples_in_second": 50000,
         "predictions": {
-            "DV_mean": 0.13,
+            "DV_mean": dv,
             "DV_std": 0.02,
             "DV_min": 0.08,
             "DV_max": 0.21,
@@ -523,6 +525,10 @@ class MockSimulator:
             for row in rows:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
+    def write_l1_realtime(self, scenario_id: str) -> None:
+        """Refresh just the L1 realtime file (called each tick so /l1/realtime moves)."""
+        self._write(_l1_realtime(scenario_id), "L1", f"L1_{scenario_id}_realtime.json")
+
     def generate_all(self) -> None:
         for s in ACTIVE_SCENARIOS:
             self._write(_l1_realtime(s), "L1", f"L1_{s}_realtime.json")
@@ -548,7 +554,7 @@ class MockSimulator:
 # --- event payload builders + publish helpers (§3.2 / §十三) -----------------
 def l1_summary_payload(s: str) -> dict[str, Any]:
     return {
-        "DV_mean": 0.13,
+        "DV_mean": ts.current_value("dv", s),  # moving value each tick
         "ylabel_mode": "LN",
         "latency": {"mean_ms": 0.20, "p99_ms": 0.35},
         "fallback_count": 0,

@@ -353,3 +353,51 @@ BFF: it must attach `X-Correlation-ID` / `X-User-ID` / `X-User-Role` on **every*
 request — reads included — not only mutations. A read without a valid role → 400.
 This is intentional: per-role read gating + a caller identity for auditing on
 every call. (Confirmed per batch-3 review; complements D3.5.)
+
+---
+
+## Batch 4 — Snapshot + trends
+
+### D4.1 Snapshot field fidelity + long-form scenario id
+
+`GET /ui/snapshot?device=` mirrors design-backend §2 field-for-field (the Flask
+normalizer depends on it). `dv`/`residual` values are the current samples from the
+moving time-series (D4.5); `dv.delta_5min` and `residual.sigma3_margin_pct` are
+**backend-computed** (batch-4 pre-check #1), not frontend-derived. The example in
+§2 shows `scenario.id: "S01"`; we emit the **long form** `01_Pick_and_Place`
+(PROMPT §3 #5 overrides the example).
+
+### D4.2 Snapshot `alarms` block is a placeholder until batch 5
+
+The alarm subsystem is batch 5. Until then the snapshot's `alarms`
+`{active, critical, warning, oldest_pending_s}` is a fixed representative
+placeholder. Batch 5 will source it from the real alarm store. Recorded per
+pre-check #2.
+
+### D4.3 Device registry (static for now)
+
+Devices resolve through `app/domain/devices.py` — currently a static map with the
+single device `AXIS-04 → {cell: Hsinchu-CellA, line: Line02, scenario: 01_Pick_and_Place}`.
+An unknown `device` query value → 404 (never flows through untrusted). Future
+sourcing (config file / DB / discovery) is deferred; when added, keep the
+`get_device()` interface so call sites don't change. Recorded per pre-check #4.
+
+### D4.4 Trends response shape (§10 leaves it open)
+
+design-backend §10 fixes the query (`metrics`, `window=1h|8h|24h`, `device`) and
+the ≤500-points/series downsample rule but not the body shape. We return:
+`{device, window, generated_at, series: {<metric>: {points: [{t, value}], threshold}}}`.
+Each series is backend-downsampled to ≤500 points (§10.3 — the browser must not
+accumulate). Unknown metric → 400; unknown device → 404; bad window → 422.
+
+### D4.5 Moving, deterministic time-series (resolves batch-3 observation #1)
+
+Batch 3's engine values were static constants (a frontend chart would flat-line).
+`app/domain/timeseries.py` generates a moving series — base + sine + seeded noise
++ occasional spike — that is **deterministic** per `(metric, device, window)` via a
+fixed digest seed (NOT builtin `hash()`, which is PYTHONHASHSEED-salted), so tests
+are stable while the shape animates. The simulator's `l1:summary` event payload and
+the `/l1/realtime` file (refreshed each worker tick) use `current_value`, so the
+polling endpoint and the WS stream both move. The snapshot degrades gracefully —
+it computes from the generator + registry and never 404s on missing engine files,
+because it is the always-on first screen.

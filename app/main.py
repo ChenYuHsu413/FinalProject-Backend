@@ -17,6 +17,7 @@ from app.core.db import dispose_engine
 from app.core.errors import build_error_response, correlation_id_of, register_exception_handlers
 from app.core.security import TrustBoundaryMiddleware
 from app.core.settings import get_settings
+from app.domain.devices import DeviceNotFound
 from app.repositories.files.engine_repo import EngineDataNotFound
 from app.routers import authz, health
 from app.routers.engine import (
@@ -32,7 +33,7 @@ from app.routers.engine import (
     scenarios,
     shap,
 )
-from app.routers.governance import audit
+from app.routers.governance import audit, snapshot, trends
 
 API_PREFIX = "/api/v1"
 
@@ -54,6 +55,15 @@ _ENGINE_ROUTERS = (
 async def _engine_not_found_handler(request: Request, exc: EngineDataNotFound) -> JSONResponse:
     # Missing engine data / unknown scenario is a documented 404, never a 500
     # (batch-3 acceptance #2/#3).
+    return build_error_response(
+        status_code=404,
+        code="NOT_FOUND",
+        message=str(exc),
+        correlation_id=correlation_id_of(request),
+    )
+
+
+async def _device_not_found_handler(request: Request, exc: DeviceNotFound) -> JSONResponse:
     return build_error_response(
         status_code=404,
         code="NOT_FOUND",
@@ -84,10 +94,13 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
     app.add_exception_handler(EngineDataNotFound, _engine_not_found_handler)
+    app.add_exception_handler(DeviceNotFound, _device_not_found_handler)
 
     app.include_router(health.router, prefix=API_PREFIX)
     app.include_router(authz.router, prefix=API_PREFIX)
     app.include_router(audit.router, prefix=API_PREFIX)
+    app.include_router(snapshot.router, prefix=API_PREFIX)
+    app.include_router(trends.router, prefix=API_PREFIX)
     for engine_router in _ENGINE_ROUTERS:
         app.include_router(engine_router, prefix=API_PREFIX)
 

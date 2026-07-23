@@ -22,7 +22,7 @@ does, over a service token.
 > `"mock_mode": true` (from batch 3). HTTP 200/202 never means "the device did
 > it" — commands can end in `timeout` (batch 6).
 
-## Status — batch 3 of 8 done (引擎層唯讀端點 + mock simulator)
+## Status — batch 4 of 8 done (Snapshot + trends)
 
 Implemented so far (PROMPT §5):
 
@@ -45,8 +45,16 @@ mock simulator generates the files and publishes enveloped events on the worker'
 §十三 schedule. Swapping in the real pipeline touches only the file repository +
 simulator.
 
-Not yet implemented (later batches): snapshot/trends, alarms, commands,
-approvals/training, retention, deployment hardening. See `docs/DECISIONS.md`.
+**Batch 4 — Snapshot + trends:** `GET /ui/snapshot` (design-backend §2, field-exact,
+backend-computed `delta_5min`/`sigma3_margin_pct`) and `GET /trends` (§10,
+backend-downsampled ≤500 pts/series, 1h/8h/24h). A deterministic moving
+time-series generator (`app/domain/timeseries.py`) drives dv/residual so charts
+animate instead of flat-lining; a device registry resolves `device` (unknown →
+404). This batch completes Stage A→B: the Flask frontend can consume real format
+everywhere.
+
+Not yet implemented (later batches): alarms, commands, approvals/training,
+retention, deployment hardening. See `docs/DECISIONS.md`.
 
 ## Endpoints
 
@@ -68,6 +76,8 @@ approvals/training, retention, deployment hardening. See `docs/DECISIONS.md`.
 | GET | `/api/v1/ensemble/status` | `dashboard.read` |
 | GET | `/api/v1/control-mode` | `dashboard.read` |
 | GET | `/api/v1/data-lifecycle` | `dashboard.read` |
+| GET | `/api/v1/ui/snapshot` | `dashboard.read` |
+| GET | `/api/v1/trends` | `trend.read` |
 
 Engine endpoints read files under `ENGINE_DATA_DIR`; missing data / unknown
 scenario → documented **404**. In `MOCK_MODE` the worker generates the files and
