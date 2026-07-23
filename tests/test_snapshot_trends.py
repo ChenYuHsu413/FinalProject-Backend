@@ -6,6 +6,16 @@ engine files or DB are required for the success path.
 
 from __future__ import annotations
 
+import os
+
+import pytest
+
+# Snapshot is DB-backed from batch 5 (real alarm counts) — its endpoint resolves a
+# DB session, so these need Postgres. Trends stays DB-free.
+_needs_db = pytest.mark.skipif(
+    not os.environ.get("DATABASE_URL"), reason="snapshot needs a database (alarm counts)"
+)
+
 SERVICE_TOKEN = "test-service-token"
 HEADERS = {
     "Authorization": f"Bearer {SERVICE_TOKEN}",
@@ -16,6 +26,7 @@ HEADERS = {
 
 
 # --- snapshot (design-backend §2) -------------------------------------------
+@_needs_db
 async def test_snapshot_shape_and_fields(client):
     resp = await client.get("/api/v1/ui/snapshot?device=AXIS-04", headers=HEADERS)
     assert resp.status_code == 200, resp.text
@@ -32,12 +43,14 @@ async def test_snapshot_shape_and_fields(client):
     assert {"comm", "data_quality", "model", "fallback", "latency"} <= set(b["health_cards"])
 
 
+@_needs_db
 async def test_snapshot_default_device(client):
     resp = await client.get("/api/v1/ui/snapshot", headers=HEADERS)
     assert resp.status_code == 200
     assert resp.json()["device"]["id"] == "AXIS-04"
 
 
+@_needs_db
 async def test_snapshot_unknown_device_404(client):
     resp = await client.get("/api/v1/ui/snapshot?device=NOPE", headers=HEADERS)
     assert resp.status_code == 404

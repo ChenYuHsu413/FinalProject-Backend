@@ -15,8 +15,10 @@ from fastapi.responses import JSONResponse
 
 from app.core.db import dispose_engine
 from app.core.errors import build_error_response, correlation_id_of, register_exception_handlers
+from app.core.redis import dispose_redis
 from app.core.security import TrustBoundaryMiddleware
 from app.core.settings import get_settings
+from app.domain.alarms import InvalidAlarmTransition
 from app.domain.devices import DeviceNotFound
 from app.repositories.files.engine_repo import EngineDataNotFound
 from app.routers import authz, health
@@ -33,7 +35,7 @@ from app.routers.engine import (
     scenarios,
     shap,
 )
-from app.routers.governance import audit, snapshot, trends
+from app.routers.governance import alarms, audit, maintenance, snapshot, trends
 
 API_PREFIX = "/api/v1"
 
@@ -72,12 +74,24 @@ async def _device_not_found_handler(request: Request, exc: DeviceNotFound) -> JS
     )
 
 
+async def _invalid_transition_handler(
+    request: Request, exc: InvalidAlarmTransition
+) -> JSONResponse:
+    return build_error_response(
+        status_code=409,
+        code="CONFLICT",
+        message=str(exc),
+        correlation_id=correlation_id_of(request),
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Batch 3+: open Redis / start mock simulator here.
+    # The mock simulator runs in the worker (DECISIONS D3.4), not here.
     yield
-    # The DB engine is lazily created on first request; dispose it on shutdown.
+    # Connections are lazily created on first use; dispose them on shutdown.
     await dispose_engine()
+    await dispose_redis()
 
 
 def create_app() -> FastAPI:
@@ -95,12 +109,15 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     app.add_exception_handler(EngineDataNotFound, _engine_not_found_handler)
     app.add_exception_handler(DeviceNotFound, _device_not_found_handler)
+    app.add_exception_handler(InvalidAlarmTransition, _invalid_transition_handler)
 
     app.include_router(health.router, prefix=API_PREFIX)
     app.include_router(authz.router, prefix=API_PREFIX)
     app.include_router(audit.router, prefix=API_PREFIX)
     app.include_router(snapshot.router, prefix=API_PREFIX)
     app.include_router(trends.router, prefix=API_PREFIX)
+    app.include_router(alarms.router, prefix=API_PREFIX)
+    app.include_router(maintenance.router, prefix=API_PREFIX)
     for engine_router in _ENGINE_ROUTERS:
         app.include_router(engine_router, prefix=API_PREFIX)
 

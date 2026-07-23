@@ -367,12 +367,12 @@ moving time-series (D4.5); `dv.delta_5min` and `residual.sigma3_margin_pct` are
 §2 shows `scenario.id: "S01"`; we emit the **long form** `01_Pick_and_Place`
 (PROMPT §3 #5 overrides the example).
 
-### D4.2 Snapshot `alarms` block is a placeholder until batch 5
+### D4.2 Snapshot `alarms` block is a placeholder until batch 5  — RESOLVED (batch 5, D5.3)
 
 The alarm subsystem is batch 5. Until then the snapshot's `alarms`
 `{active, critical, warning, oldest_pending_s}` is a fixed representative
-placeholder. Batch 5 will source it from the real alarm store. Recorded per
-pre-check #2.
+placeholder. **Resolved in batch 5**: the snapshot now queries real alarm counts
+via `AlarmRepository.counts(device)` (see D5.3).
 
 ### D4.3 Device registry (static for now)
 
@@ -401,3 +401,68 @@ the `/l1/realtime` file (refreshed each worker tick) use `current_value`, so the
 polling endpoint and the WS stream both move. The snapshot degrades gracefully —
 it computes from the generator + registry and never 404s on missing engine files,
 because it is the always-on first screen.
+
+---
+
+## Batch 5 — 警報 + 維修回報 (alarms + maintenance)
+
+### D5.1 Alarm lifecycle state machine (pure)
+
+`app/domain/alarms.py`: `active → acknowledged → resolved` (+ `active → resolved`
+for system auto-resolve on residual recovery). All legal/illegal transitions are
+pure functions with full-path unit tests (same standard as the command SM). `ack`
+only claims/marks-read — it does NOT clear the device fault (frontend §8.3). An
+illegal transition raises `InvalidAlarmTransition` → 409.
+
+### D5.2 Fallback-escalation auto-alarm dedup
+
+`AlarmService.raise_from_fallback` de-duplicates: if an **active** alarm already
+exists for the same `(device, rule)`, it is updated (correlation refreshed), not
+re-opened — a persisting escalation cannot flood the alarm centre. The fallback
+event and the alarm share one `correlation_id`. Dedup lookup is indexed
+(`ix_alarms_device_rule_status`). Only the *create* is audited (`alarm.raised`);
+dedup updates are not, to avoid audit flooding.
+
+### D5.3 Snapshot alarms are now real (supersedes D4.2)
+
+The snapshot `alarms` block is computed from `AlarmRepository.counts(device)`
+(active count, critical/warning breakdown, oldest-pending age) instead of the
+batch-4 placeholder.
+
+### D5.4 Alarm events
+
+`alarm:new` / `alarm:updated` publish on `ai_servo:alarm` with the §11 envelope.
+Publishing is **best-effort** (a Redis outage never fails the mutation); verified
+with fakeredis. The API publishes to Redis only (the Flask BFF fans out to
+browsers).
+
+### D5.5 alarm.ack permission — admin is read-only
+
+`alarm.ack` = operator + engineer; admin is read-only on alarm handling
+(frontend §6.3). An admin ack attempt → 403 **and** an `authz.denied` audit row
+(reverse-test enforced). 403 is documented on the alarm/maintenance routers so
+the contract test accepts it (a single fuzz role can't satisfy every endpoint's
+permission).
+
+### D5.6 Input defense on the new write surface
+
+ack `note`, resolve `maintenance_report_id`, and maintenance-report bodies are
+length-capped + recursively NUL-checked (batch-2 lesson). schemathesis also
+caught a NUL byte in a **path/query param** reaching a Postgres query
+(`CharacterNotInRepertoireError` → 500); fixed globally in the trust-boundary
+middleware, which now rejects NUL in path/query with 422 (documented on any
+param'd endpoint). Body NUL stays handled by the per-model validators.
+
+### D5.7 Maintenance report links alarm resolve; residual recovery is mock
+
+Creating a maintenance report with an `alarm_id` also resolves that alarm (§8).
+The "residual recovery observation" field (`residual_recovery_status`) is set to
+`"observing"` — simulator-filled for now; a later batch wires it to the real
+residual-recovery watcher.
+
+### D5.8 ID generation
+
+`alarm_id` / `report_id` are `ALM-<hex12>` / `MNT-<hex12>` (uuid-based, unique).
+The §-example zero-padded sequence (`CMD-2026-000123`) would need a counter table;
+uuid-based ids are sufficient for the mock and remain unique. Revisit if a
+human-friendly monotonic sequence is required.

@@ -5,6 +5,18 @@ from __future__ import annotations
 import uuid
 
 
+async def test_nul_byte_in_query_is_422(client, auth_headers):
+    # %00 decodes to NUL server-side; reject before it reaches a Postgres query.
+    resp = await client.get("/api/v1/alarms?device=a%00b", headers=auth_headers)
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+async def test_nul_byte_in_path_is_422(client, auth_headers):
+    resp = await client.get("/api/v1/alarms/AL%00M", headers=auth_headers)
+    assert resp.status_code == 422
+
+
 async def test_missing_service_token_is_forbidden(client):
     resp = await client.get("/api/v1/authz/permissions")
     assert resp.status_code == 403

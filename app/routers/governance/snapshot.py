@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import get_session
 from app.core.permissions import DASHBOARD_READ
 from app.core.security import require_permission
 from app.domain.devices import DEFAULT_DEVICE
@@ -85,8 +87,9 @@ class Snapshot(BaseModel):
 
 
 @router.get("/ui/snapshot", response_model=Snapshot)
-def ui_snapshot(
+async def ui_snapshot(
+    session: AsyncSession = Depends(get_session),
     device: str = Query(default=DEFAULT_DEVICE),
     _=Depends(require_permission(DASHBOARD_READ)),
 ) -> dict:
-    return build_snapshot(device)
+    return await build_snapshot(session, device)

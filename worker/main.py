@@ -19,6 +19,7 @@ from arq.connections import RedisSettings
 
 from worker.tasks import (
     reverify_audit_chain,
+    sim_fallback_escalation,
     sim_fallback_event,
     sim_l1_summary,
     sim_l2_finetune,
@@ -50,6 +51,7 @@ class WorkerSettings:
         sim_l2_finetune,
         sim_fallback_event,
         sim_shap_diagnosis,
+        sim_fallback_escalation,
     ]
     # Schedules per 後端資料規格書 §十三 (mock simulator + audit re-verify):
     cron_jobs = [
@@ -62,6 +64,9 @@ class WorkerSettings:
         cron(
             sim_shap_diagnosis, minute=set(range(0, 60, 5)), second={30}
         ),  # event-type (mock: 5min)
+        cron(
+            sim_fallback_escalation, minute=set(range(0, 60, 10)), second={15}
+        ),  # escalation -> auto-alarm (mock: 10min)
     ]
     on_startup = _on_startup
     on_shutdown = _on_shutdown

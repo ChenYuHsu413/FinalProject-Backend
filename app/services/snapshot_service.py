@@ -15,8 +15,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.domain import timeseries as ts
 from app.domain.devices import get_device
+from app.repositories.pg.alarm_repo import AlarmRepository
 
 SCHEMA_VERSION = "1.0"
 
@@ -39,8 +42,11 @@ def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def build_snapshot(device_id: str) -> dict:
+async def build_snapshot(session: AsyncSession, device_id: str) -> dict:
     device = get_device(device_id)  # raises DeviceNotFound -> 404
+
+    # Real alarm counts (batch 5, replacing the batch-4 placeholder — DECISIONS D4.2).
+    alarms = await AlarmRepository(session).counts(device.id)
 
     dv_value = ts.current_value("dv", device.id)
     residual_value = ts.current_value("residual", device.id)
@@ -67,8 +73,7 @@ def build_snapshot(device_id: str) -> dict:
             "sigma3_margin_pct": round(residual_margin, 1),
             "status": "in_threshold" if residual_value <= _RESIDUAL_THRESHOLD else "exceeded",
         },
-        # Placeholder until the alarm subsystem (batch 5); DECISIONS D4.2.
-        "alarms": {"active": 2, "critical": 1, "warning": 1, "oldest_pending_s": 262},
+        "alarms": alarms,
         "model": {"active_version": "v3.2.0", "scenario": device.scenario_id},
         "pipeline": {
             "stages": [

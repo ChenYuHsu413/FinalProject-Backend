@@ -22,7 +22,7 @@ does, over a service token.
 > `"mock_mode": true` (from batch 3). HTTP 200/202 never means "the device did
 > it" — commands can end in `timeout` (batch 6).
 
-## Status — batch 4 of 8 done (Snapshot + trends)
+## Status — batch 5 of 8 done (警報 + 維修回報)
 
 Implemented so far (PROMPT §5):
 
@@ -53,8 +53,15 @@ animate instead of flat-lining; a device registry resolves `device` (unknown →
 404). This batch completes Stage A→B: the Flask frontend can consume real format
 everywhere.
 
-Not yet implemented (later batches): alarms, commands, approvals/training,
-retention, deployment hardening. See `docs/DECISIONS.md`.
+**Batch 5 — 警報 + 維修回報:** alarm lifecycle state machine
+(`active→acknowledged→resolved`, pure logic in `app/domain/alarms.py`), `/alarms/*`
++ `/maintenance-reports` endpoints, fallback-escalation auto-opens an alarm with
+`(device, rule)` dedup, `alarm:new`/`alarm:updated` events on `ai_servo:alarm`,
+snapshot alarm counts now real. All mutations audited; `alarm.ack` = operator +
+engineer (admin read-only).
+
+Not yet implemented (later batches): commands, approvals/training, retention,
+deployment hardening. See `docs/DECISIONS.md`.
 
 ## Endpoints
 
@@ -78,6 +85,10 @@ retention, deployment hardening. See `docs/DECISIONS.md`.
 | GET | `/api/v1/data-lifecycle` | `dashboard.read` |
 | GET | `/api/v1/ui/snapshot` | `dashboard.read` |
 | GET | `/api/v1/trends` | `trend.read` |
+| GET | `/api/v1/alarms`, `/alarms/{id}` | `alarm.read` |
+| POST | `/api/v1/alarms/{id}/ack`, `/resolve` | `alarm.ack` (operator/engineer) |
+| POST | `/api/v1/maintenance-reports` | `maintenance.report` |
+| GET | `/api/v1/maintenance-reports` | `alarm.read` |
 
 Engine endpoints read files under `ENGINE_DATA_DIR`; missing data / unknown
 scenario → documented **404**. In `MOCK_MODE` the worker generates the files and

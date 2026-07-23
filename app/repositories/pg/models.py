@@ -1,9 +1,9 @@
-"""Governance ORM models (batch 2: audit).
+"""Governance ORM models.
 
-`audit_events` is append-only and hash-chained (design-backend.md §5.1). The
-DB-generated columns ``id`` and ``created_at`` are deliberately NOT part of the
-hash (see app/domain/audit.py + DECISIONS D2.2); ``ts`` is the app-set business
-event time that *is* hashed.
+batch 2: `audit_events` — append-only, hash-chained (design-backend.md §5.1);
+DB-generated `id`/`created_at` are NOT hashed (see app/domain/audit.py + D2.2).
+batch 5: `alarms` + `maintenance_reports` — mutable governance state (ack/resolve
+update rows), so no append-only triggers here.
 """
 
 from __future__ import annotations
@@ -71,3 +71,49 @@ class AuditChainVerification(Base):
     first_bad_position: Mapped[int | None] = mapped_column(Integer)
     head_hash: Mapped[str | None] = mapped_column(String(64))
     reason: Mapped[str | None] = mapped_column(String(128))
+
+
+class Alarm(Base):
+    """Alarm lifecycle record (design-backend §4.1). Mutable: ack/resolve update."""
+
+    __tablename__ = "alarms"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    alarm_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)  # critical/warning/info
+    device: Mapped[str] = mapped_column(String(64), nullable=False)
+    scenario_id: Mapped[str | None] = mapped_column(String(64))
+    rule: Mapped[str] = mapped_column(String(64), nullable=False)  # e.g. residual_gt_3sigma
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    raised_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    ack_by: Mapped[str | None] = mapped_column(String(128))
+    ack_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ack_note: Mapped[str | None] = mapped_column(Text)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    root_cause_ref: Mapped[str | None] = mapped_column(String(128))  # SHAP diagnosis ref
+    maintenance_report_id: Mapped[str | None] = mapped_column(String(64))
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class MaintenanceReport(Base):
+    """Maintenance report (design-backend §8)."""
+
+    __tablename__ = "maintenance_reports"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    report_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    alarm_id: Mapped[str | None] = mapped_column(String(64))
+    device: Mapped[str] = mapped_column(String(64), nullable=False)
+    actions_taken: Mapped[list] = mapped_column(JSONB, nullable=False)
+    result: Mapped[str] = mapped_column(String(32), nullable=False)
+    attachments: Mapped[list | None] = mapped_column(JSONB)
+    residual_recovery_status: Mapped[str | None] = mapped_column(String(32))
+    created_by: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

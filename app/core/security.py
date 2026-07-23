@@ -72,6 +72,18 @@ class TrustBoundaryMiddleware(BaseHTTPMiddleware):
         request.state.user_id = None
         request.state.user_role = None
 
+        # Reject NUL bytes in path/query before they reach a Postgres query
+        # (asyncpg raises CharacterNotInRepertoireError → 500). 422 is documented
+        # on any endpoint with a path/query param. Body NUL is handled by the
+        # per-model validators. (Found by schemathesis fuzzing a path param.)
+        if "\x00" in path or any("\x00" in v for v in request.query_params.values()):
+            return build_error_response(
+                status_code=422,
+                code="VALIDATION_ERROR",
+                message="NUL bytes are not allowed in the request path/query.",
+                correlation_id=request.state.correlation_id,
+            )
+
         if _is_exempt(path):
             return await self._call(request, call_next)
 
