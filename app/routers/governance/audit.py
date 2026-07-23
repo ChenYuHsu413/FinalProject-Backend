@@ -17,7 +17,7 @@ import io
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_session
@@ -28,25 +28,66 @@ from app.services.audit_service import AuditService
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
+def _reject_nul(value: object) -> None:
+    """Recursively reject NUL bytes — PostgreSQL text/JSONB cannot store \\u0000.
+
+    Without this, a string containing NUL passes Pydantic but blows up at INSERT
+    with an undocumented 500 (found by schemathesis fuzzing). Checks dict keys as
+    well as values.
+    """
+    if isinstance(value, str):
+        if "\x00" in value:
+            raise ValueError("NUL bytes are not allowed")
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            _reject_nul(k)
+            _reject_nul(v)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_nul(item)
+
+
 # --- Schemas -----------------------------------------------------------------
 class AuditEventIn(BaseModel):
-    action: str
-    user_id: str | None = None
-    role: str | None = None
-    source_ip: str | None = None
-    command_id: str | None = None
-    target_device: str | None = None
-    scenario_id: str | None = None
+    # max_length mirrors the DB column widths (app/repositories/pg/models.py), so
+    # an overlong value fails with 422 instead of a 500 from a varchar overflow.
+    action: str = Field(max_length=64)
+    user_id: str | None = Field(default=None, max_length=128)
+    role: str | None = Field(default=None, max_length=32)
+    source_ip: str | None = Field(default=None, max_length=64)
+    command_id: str | None = Field(default=None, max_length=64)
+    target_device: str | None = Field(default=None, max_length=64)
+    scenario_id: str | None = Field(default=None, max_length=64)
     old_value: dict | None = None
     new_value: dict | None = None
-    reason: str | None = None
-    result: str | None = None
-    model_version: str | None = None
-    mode: str | None = None
+    reason: str | None = None  # maps to TEXT (no length cap)
+    result: str | None = Field(default=None, max_length=32)
+    model_version: str | None = Field(default=None, max_length=64)
+    mode: str | None = Field(default=None, max_length=32)
     ts: datetime | None = None
     proposed_at: datetime | None = None
     approved_at: datetime | None = None
     executed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _no_nul(self) -> AuditEventIn:
+        for value in (
+            self.action,
+            self.user_id,
+            self.role,
+            self.source_ip,
+            self.command_id,
+            self.target_device,
+            self.scenario_id,
+            self.result,
+            self.model_version,
+            self.mode,
+            self.reason,
+            self.old_value,
+            self.new_value,
+        ):
+            _reject_nul(value)
+        return self
 
 
 class AuditEventOut(BaseModel):
@@ -144,7 +185,8 @@ async def list_events(
     action: str | None = None,
     date_from: datetime | None = Query(default=None, alias="from"),
     date_to: datetime | None = Query(default=None, alias="to"),
-    page: int = Query(default=1, ge=1),
+    # Cap page so OFFSET = (page-1)*page_size cannot overflow int64 → DB 500.
+    page: int = Query(default=1, ge=1, le=1_000_000),
     page_size: int = Query(default=50, ge=1, le=500),
 ) -> AuditEventsPage:
     # Operators may only see their own entries — enforced in SQL (§5.2).
@@ -183,7 +225,12 @@ async def verify_chain(
     )
 
 
-@router.get("/export")
+@router.get(
+    "/export",
+    # Declare the CSV media type so schemathesis' content-type conformance check
+    # matches what we actually return (the default response_model would imply JSON).
+    responses={200: {"content": {"text/csv": {}}, "description": "CSV export"}},
+)
 async def export_events(
     session: AsyncSession = Depends(get_session),
     _: Principal = Depends(require_permission(AUDIT_EXPORT)),

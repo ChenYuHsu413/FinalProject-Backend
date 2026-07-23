@@ -241,3 +241,36 @@ failure can neither break the 4xx response nor trigger another audit write (no
 recursion). Consequence to revisit: a flood of bad-token requests becomes a
 flood of audit writes — rate-limiting is deferred to the deployment/hardening
 batch.
+
+### D2.9 Definition of "本機驗證" (local verification) — hardened after batch-2 CI failure
+
+Batch 2 was first delivered green on unit + offline checks but **red in CI**: the
+migration had never executed against a real PostgreSQL (Docker would not start on
+the dev machine), and offline `alembic upgrade head --sql` structurally cannot
+catch execution-time failures. From now on, "本機驗證" (or "verified") for any
+batch touching the DB **must** include:
+
+1. `alembic upgrade head` run against a **real PostgreSQL** (not `--sql`
+   generation), with the actual output captured/attached to the delivery.
+2. The full test suite (incl. PG integration + schemathesis) passing in a shell
+   where **interfering env vars are already set** (e.g. `SERVICE_TOKEN`), so a
+   test that only passes because of a clean local env is caught.
+
+Root causes fixed in the post-review pass (each was masked until the previous
+was fixed):
+
+1. **Migration crashed** — `op.execute` strings bundled `DROP; CREATE;`; asyncpg
+   accepts one command per prepared statement. Split into individual
+   `op.execute()` calls. (This is why #D2.9 rule 1 exists — offline SQL hid it.)
+2. **All tests 403** — `conftest` used `os.environ.setdefault("SERVICE_TOKEN")`,
+   which no-ops when CI already sets `SERVICE_TOKEN=ci-test-token`; app and tests
+   then disagreed on the token. Changed to forced assignment + cache clear.
+   (This is why #D2.9 rule 2 exists.)
+3. **schemathesis 500s** — three undocumented server errors: overlong strings vs
+   `VARCHAR` widths (added `max_length` to `AuditEventIn` matching the columns);
+   NUL bytes in text/JSONB (recursive `_reject_nul`, incl. dict keys); unbounded
+   `page` overflowing the `OFFSET` int64 (`page` `le=1_000_000`).
+4. **Ancillary** — `/audit/export` did not declare `text/csv` in its OpenAPI
+   responses (content-type conformance); the validation error handler could 500
+   while serializing a pydantic `ctx` exception object (added `_json_safe` in
+   `errors.py`).

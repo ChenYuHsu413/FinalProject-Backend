@@ -34,7 +34,14 @@ _HEADERS = {
 
 
 @schema.parametrize()
-@settings(max_examples=10, deadline=None, suppress_health_check=list(HealthCheck))
+@settings(
+    max_examples=15,
+    deadline=None,
+    # derandomize → same generated cases every run, so fuzzing can't flake CI
+    # (the user saw reruns surface new cases; this makes the gate reproducible).
+    derandomize=True,
+    suppress_health_check=list(HealthCheck),
+)
 def test_openapi_contract(case):
     if case.path.startswith("/api/v1/audit") and not os.environ.get("DATABASE_URL"):
         pytest.skip("audit endpoints require a database")

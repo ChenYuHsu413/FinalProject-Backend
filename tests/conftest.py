@@ -11,9 +11,17 @@ import pytest_asyncio
 
 SERVICE_TOKEN = "test-service-token"
 
-# Must be set before app.core.settings is first imported/cached.
-os.environ.setdefault("SERVICE_TOKEN", SERVICE_TOKEN)
-os.environ.setdefault("APP_ENV", "dev")
+# FORCE (not setdefault): CI sets SERVICE_TOKEN=ci-test-token in the job env, and
+# a setdefault would leave that in place — then the app expects one token while
+# the tests send another, and every request 403s. Tests must be hermetic and own
+# their token regardless of ambient env. Clear the settings cache in case
+# something imported settings before this ran.
+os.environ["SERVICE_TOKEN"] = SERVICE_TOKEN
+os.environ["APP_ENV"] = "dev"
+
+from app.core.settings import get_settings  # noqa: E402 — after env is forced
+
+get_settings.cache_clear()
 
 
 @pytest.fixture(scope="session")

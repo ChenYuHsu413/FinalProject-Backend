@@ -61,6 +61,23 @@ class AppError(Exception):
         super().__init__(message)
 
 
+def _json_safe(value: Any) -> Any:
+    """Recursively coerce a value into something JSONResponse can serialize.
+
+    Pydantic's ``RequestValidationError.errors()`` can embed an exception object
+    in each error's ``ctx`` (e.g. the ValueError from a custom validator). Passing
+    that straight to JSONResponse raises during encoding — turning a clean 422
+    into a 500. Anything not natively JSON-serializable becomes ``str(value)``.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return str(value)
+
+
 def correlation_id_of(request: Request) -> str | None:
     """Best-effort correlation id: request.state (set by middleware) then header."""
     cid = getattr(request.state, "correlation_id", None)
@@ -80,7 +97,7 @@ def build_error_response(
             "code": code,
             "message": message,
             "correlation_id": correlation_id,
-            "details": details or {},
+            "details": _json_safe(details or {}),
         }
     }
     response = JSONResponse(status_code=status_code, content=payload)

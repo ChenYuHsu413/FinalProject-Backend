@@ -31,6 +31,11 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+# asyncpg's prepared-statement protocol accepts ONE command per execute, so each
+# statement below is applied via its own op.execute() (never bundled). Bundling
+# DROP + CREATE in a single string raises
+# "cannot insert multiple commands into a prepared statement" at runtime — a
+# failure only a real DB run surfaces (offline --sql generation does not).
 _BLOCK_FUNCTION = """
 CREATE OR REPLACE FUNCTION audit_events_block_mutation() RETURNS trigger AS $$
 BEGIN
@@ -40,18 +45,18 @@ END;
 $$ LANGUAGE plpgsql;
 """
 
-_ROW_TRIGGER = """
-DROP TRIGGER IF EXISTS trg_audit_events_no_mutation ON audit_events;
+_DROP_ROW_TRIGGER = "DROP TRIGGER IF EXISTS trg_audit_events_no_mutation ON audit_events"
+_CREATE_ROW_TRIGGER = """
 CREATE TRIGGER trg_audit_events_no_mutation
     BEFORE UPDATE OR DELETE ON audit_events
-    FOR EACH ROW EXECUTE FUNCTION audit_events_block_mutation();
+    FOR EACH ROW EXECUTE FUNCTION audit_events_block_mutation()
 """
 
-_TRUNCATE_TRIGGER = """
-DROP TRIGGER IF EXISTS trg_audit_events_no_truncate ON audit_events;
+_DROP_TRUNCATE_TRIGGER = "DROP TRIGGER IF EXISTS trg_audit_events_no_truncate ON audit_events"
+_CREATE_TRUNCATE_TRIGGER = """
 CREATE TRIGGER trg_audit_events_no_truncate
     BEFORE TRUNCATE ON audit_events
-    FOR EACH STATEMENT EXECUTE FUNCTION audit_events_block_mutation();
+    FOR EACH STATEMENT EXECUTE FUNCTION audit_events_block_mutation()
 """
 
 
@@ -110,9 +115,12 @@ def upgrade() -> None:
     )
 
     # --- 3-layer append-only protection (DB layers) -------------------------
+    # One statement per execute (asyncpg requirement — see note above).
     op.execute(_BLOCK_FUNCTION)
-    op.execute(_ROW_TRIGGER)
-    op.execute(_TRUNCATE_TRIGGER)
+    op.execute(_DROP_ROW_TRIGGER)
+    op.execute(_CREATE_ROW_TRIGGER)
+    op.execute(_DROP_TRUNCATE_TRIGGER)
+    op.execute(_CREATE_TRUNCATE_TRIGGER)
     op.execute("REVOKE UPDATE, DELETE ON audit_events FROM PUBLIC")
 
 
