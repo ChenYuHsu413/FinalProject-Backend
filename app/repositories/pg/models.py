@@ -154,3 +154,72 @@ class Command(Base):
             "command_type", "device", "idempotency_key", name="uq_commands_idempotency"
         ),
     )
+
+
+class Approval(Base):
+    """Governance approval record (design-backend §6.1). Mutable: decided updates row.
+
+    `state` (not `status`) mirrors the §6.1 field name the admin frontend renders.
+    `summary` is the type-specific §6.1 payload (JSONB). `side_effect_status` /
+    `side_effect_detail` capture the post-decision application outcome separately
+    from the decision itself (model promotion rewrite / param five-check — D7.3).
+    """
+
+    __tablename__ = "approvals"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    approval_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    type: Mapped[str] = mapped_column(String(32), nullable=False)  # §6.1 approval type
+    risk: Mapped[str] = mapped_column(String(16), nullable=False, default="low")
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    # Target context (scenario_id / device are not always in `summary`, §6.1).
+    scenario_id: Mapped[str | None] = mapped_column(String(64))
+    device: Mapped[str | None] = mapped_column(String(64))
+    summary: Mapped[dict | None] = mapped_column(JSONB)
+    reason: Mapped[str | None] = mapped_column(Text)  # proposal reason
+    proposed_by: Mapped[str | None] = mapped_column(String(128))
+    proposed_role: Mapped[str | None] = mapped_column(String(32))
+    proposed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    decided_by: Mapped[str | None] = mapped_column(String(128))
+    decided_role: Mapped[str | None] = mapped_column(String(32))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_note: Mapped[str | None] = mapped_column(Text)
+    # Post-decision application (D7.3): applied | apply_failed | failed.
+    side_effect_status: Mapped[str | None] = mapped_column(String(24))
+    side_effect_detail: Mapped[dict | None] = mapped_column(JSONB)
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class TrainingJob(Base):
+    """Training job (design-backend §9). Mutable: worker advances state."""
+
+    __tablename__ = "training_jobs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    type: Mapped[str] = mapped_column(String(16), nullable=False)  # finetune | full_retrain
+    scenario_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    data_window: Mapped[str | None] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    progress_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rmse: Mapped[float | None] = mapped_column()  # current metric (Float via type affinity)
+    shadow_comparison: Mapped[dict | None] = mapped_column(JSONB)  # §9 new/old RMSE etc.
+    result_model_version: Mapped[str | None] = mapped_column(String(64))
+    approval_id: Mapped[str | None] = mapped_column(String(64))  # spawned on `passed`
+    requested_by: Mapped[str | None] = mapped_column(String(128))
+    requested_role: Mapped[str | None] = mapped_column(String(32))
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

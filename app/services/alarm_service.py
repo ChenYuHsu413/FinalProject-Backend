@@ -115,6 +115,50 @@ class AlarmService:
         await self._publish("alarm:new", alarm)
         return alarm, True
 
+    async def raise_governance_alarm(
+        self,
+        *,
+        device: str,
+        rule: str,
+        severity: str = "warning",
+        scenario_id: str | None = None,
+        correlation_id: str | None = None,
+        detail: dict | None = None,
+    ) -> Alarm:
+        """Open a governance alarm (e.g. a model-promotion apply failure — D7.3).
+
+        Distinct from ``raise_from_fallback``: no (device, rule) dedup — each
+        governance failure is a distinct, individually-actionable event, not a
+        persisting escalation that could flood the centre.
+        """
+        alarm = Alarm(
+            alarm_id=_new_alarm_id(),
+            severity=severity,
+            device=device,
+            scenario_id=scenario_id,
+            rule=rule,
+            status="active",
+            raised_at=_now(),
+            correlation_id=correlation_id,
+        )
+        await self.repo.add(alarm)
+        await AuditService(self.session).record(
+            action="alarm.raised",
+            correlation_id=correlation_id,
+            target_device=device,
+            scenario_id=scenario_id,
+            new_value={
+                "alarm_id": alarm.alarm_id,
+                "rule": rule,
+                "severity": severity,
+                **(detail or {}),
+            },
+            result="active",
+            reason=rule,
+        )
+        await self._publish("alarm:new", alarm)
+        return alarm
+
     async def _get_or_404(self, alarm_id: str) -> Alarm:
         alarm = await self.repo.get(alarm_id)
         if alarm is None:

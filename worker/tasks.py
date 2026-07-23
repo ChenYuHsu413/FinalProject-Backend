@@ -144,6 +144,31 @@ async def mock_confirm_commands(ctx: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True}
 
 
+async def advance_training_jobs(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Mock: step every active training job one state along the happy path (D7.6).
+
+    Reaching `shadow` registers a shadow candidate in models.jsonl; reaching
+    `passed` spawns a `model_promotion` pending approval — the head of the
+    train → propose → approve → model:changed demo chain.
+    """
+    if not get_settings().mock_mode:
+        return {"skipped": True}
+
+    from app.repositories.pg.training_repo import TrainingRepository
+    from app.services.training_service import TrainingService
+
+    pub = _publisher(ctx)
+    advanced = 0
+    async with get_sessionmaker()() as session:
+        repo = TrainingRepository(session)
+        service = TrainingService(session, pub)
+        for job in await repo.active_jobs():
+            await service.advance(job)
+            await session.commit()
+            advanced += 1
+    return {"advanced": advanced}
+
+
 async def reverify_audit_chain(ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """Recompute the whole audit chain and persist the result.
 

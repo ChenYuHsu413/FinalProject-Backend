@@ -18,6 +18,7 @@ from arq import cron
 from arq.connections import RedisSettings
 
 from worker.tasks import (
+    advance_training_jobs,
     mock_confirm_commands,
     reverify_audit_chain,
     scan_command_timeouts,
@@ -56,6 +57,7 @@ class WorkerSettings:
         sim_fallback_escalation,
         scan_command_timeouts,
         mock_confirm_commands,
+        advance_training_jobs,
     ]
     # Schedules per 後端資料規格書 §十三 (mock simulator + audit re-verify):
     cron_jobs = [
@@ -73,6 +75,7 @@ class WorkerSettings:
         ),  # escalation -> auto-alarm (mock: 10min)
         cron(scan_command_timeouts, second=set(range(60))),  # 1s timeout scan (§3.1)
         cron(mock_confirm_commands, second=set(range(0, 60, 2))),  # mock device confirmer
+        cron(advance_training_jobs, second=set(range(0, 60, 3))),  # mock training progression
     ]
     on_startup = _on_startup
     on_shutdown = _on_shutdown

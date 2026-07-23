@@ -553,3 +553,118 @@ Two fixes after the batch-6 review:
    `app/domain/devices.py::get_device` → unknown device is **404**, consistent with
    the snapshot/trends endpoints (batch 4). Commands are a more dangerous surface
    than reads and must be at least as strict.
+
+---
+
+## Batch 7 — 治理核准 + 訓練 REST + 整合狀態 (approvals + training + integrations)
+
+### D7.1 Approval state machine (pure)
+
+`app/domain/approvals.py`: `pending → approved | rejected | withdrawn` (design-backend
+§6.1 `state` field). All three decided states are **terminal** — a decided approval
+never transitions again, so a double-approve (or approve-after-reject) raises
+`InvalidApprovalTransition` → **409** (same standard as the command/alarm SMs, D6.1).
+Full transition matrix unit-tested. IO-free: it knows nothing about who decided,
+the summary, or side effects.
+
+### D7.2 同人禁核 is 403, enforced at two layers
+
+design-backend §6.2: `decided_by != proposed_by`, violation → **403** (not 409 —
+409 is the double-approve/terminal case, D7.1). Enforced twice:
+
+1. **Permission layer** (D1.5a): propose/approve codes are split per type, and no
+   role holds both. Admin holds **no** propose code, so an admin propose is a 403
+   and the path effectively does not exist (pre-check #1, reverse-tested). Engineer
+   holds no approve code.
+2. **Service layer** (`ApprovalService._check_can_decide`): `proposed_by == decided_by`
+   → 403 regardless of permissions, *plus* a defence-in-depth re-check that the
+   decider's role holds the per-type approve code. This is belt-and-suspenders so a
+   future permission-table change cannot silently remove the guard (the explicit
+   ask in pre-check #1).
+
+Approve/reject are coarse-gated at the router on `approval.read` (admin-only, so a
+non-admin approve → 403 **and** an `authz.denied` audit row, reverse-tested); the
+service checks run on top.
+
+### D7.3 Decision ≠ application (the model-promotion side-effect ruling)
+
+Approving is the **first time the governance layer writes into an engine-layer
+file** (`models.jsonl`). The decision (`state = approved`) and the side effect
+(models.jsonl rewrite / param five-check) are **separate transactions**. If the
+side effect fails, the approval **stays `approved`** — it is recorded
+`side_effect_status = apply_failed` (registry write failed) / `failed` (a param
+check failed) with a raised alarm, and is **never rolled back**. Rationale: on the
+audit trail the approval *did happen*; pretending otherwise by reverting it would
+be a lie. The admin sees the alarm + `apply_failed` and can retry/investigate.
+Integration-tested both ways (apply success → `applied` + `model:changed`; missing
+target version → `apply_failed` + alarm).
+
+### D7.4 Event channels: governance vs deploy
+
+`approval:new` / `approval:decided` publish on `ai_servo:governance` (§6.2).
+`model:changed` publishes on **`ai_servo:l3_deploy`** — NOT governance — reusing
+the existing deploy topic (§6.2 / design-frontend §9.3): payload
+`{model_version, scenario, status: active, hash}`. `training:progress` reuses the
+existing `ai_servo:l2_finetune` topic (§9 "沿用既有 topic"), payload gains
+`job_id` / `progress_pct` / `status`. All best-effort §11 envelopes — a Redis
+outage never fails the mutation (D6.6/D5.4 precedent).
+
+### D7.5 param_tuning five-check chain + mock policy
+
+`app/domain/param_tuning.py`: whitelist → type → bounds → rate-of-change →
+device-state, **in that order**, short-circuiting at the first failure
+(design-frontend §11.3, design-backend §6.2). Pure/IO-free, fully unit-tested. The
+whitelist and rate cap are mock-stage initial values (design-backend §13 item 6 is
+an open decision): `PARAM_WHITELIST = {Kp, Ki}`, `MAX_DELTA_PCT = 10.0`,
+`SAFE_DEVICE_STATES = {idle, normal}`. The chain runs **after** approval (§6.2
+"核准後...五重檢查"); any failure → `side_effect_status = failed` + audit + alarm
+(D7.3), the approval itself stays `approved`.
+
+### D7.6 Training-job state machine + mock progression + auto-proposal
+
+`app/domain/training.py`: `queued → running → evaluating → shadow → passed`
+(+ `failed` from evaluating/shadow, `cancelled` from any non-terminal). Terminal:
+`passed/failed/cancelled`. The mock worker (`advance_training_jobs`, every 3s,
+MOCK_MODE) walks a job one happy-path step per tick. Entering `shadow` registers a
+shadow candidate in `models.jsonl`; entering `passed` **spawns a `model_promotion`
+pending approval** proposed on behalf of the job's engineer (`proposed_by =
+requested_by`) with the §6.1 summary (`from`/`to`/`rmse_improvement_pct`/
+`shadow_passed`/`shadow_window_h`). This is the head of the batch-8 demo chain:
+train → propose → approve → `model:changed`. Captured event sequence:
+`training:progress`×4 → `approval:new` → `training:progress`(passed) →
+`approval:decided` → `model:changed`.
+
+### D7.7 Spec gaps filled (propose / withdraw / detail / cancel)
+
+design-backend §6.2 lists only list/summary/approve/reject endpoints, but the
+permission model (D1.5a) and the frontend proposal flows (§8.4/§8.5/§11.3) require
+a propose path, and §6.1 names a `withdrawn` state with no endpoint. Filled:
+
+- `POST /approvals` (propose) — per-type propose code (engineer); admin → 403.
+- `POST /approvals/{id}/withdraw` — proposer-only (`proposed_by == caller` else
+  403), `pending → withdrawn`.
+- `GET /approvals/{id}` — detail read (`approval.read`).
+- `POST /training/jobs/{id}/cancel` resulting state is `cancelled` (§9 names the
+  endpoint, not the state).
+
+### D7.8 models.jsonl status enum (no `candidate`)
+
+The spec enum (資料規格書 §四 `/l3/models`) is **`active / shadow / rolled_back /
+archived`** — there is **no `candidate`**. A `model_promotion` sets the target
+version `shadow → active` and demotes the prior `active → archived`
+(`ModelRegistryFileRepository.promote`). The rewrite is **atomic** (temp file +
+`os.replace`) so a crash can never leave a truncated registry that would break
+every `/l1/model` / `/l3/models` read. Missing file / absent target version →
+`ModelRegistryError` → `apply_failed` (D7.3).
+
+### D7.9 /system/integrations honesty flag + degrade-not-500
+
+`GET /system/integrations` (design-backend §7) adds a top-level **`mock_mode`**
+flag mandated by PROMPT §7 "全域約束" (誠實敘述 — never *imply* real hardware).
+Each dependency is probed (Redis `ping`, Postgres `SELECT 1`, ≤2s timeout); a
+failed probe degrades that service to `disconnected` and the endpoint **never
+500s** (same best-effort discipline as the publisher). When anything is down it
+emits a best-effort `system:connection` event on `ai_servo:system`
+(design-frontend §9.3 gap-fill). `version_consistency.verified` + `components`
+{api, dispatcher, schema} map to the admin "服務版本一致 VERIFIED" badge. Gated on
+`system.settings` (admin — it is the admin integrations screen, §7.5).

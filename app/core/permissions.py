@@ -140,6 +140,25 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
 }
 
 
+# --- Approval type → propose/approve code maps (design-backend §6.1 + D1.5a) --
+# The per-type codes an approval's propose/decide path requires. Keyed by the
+# approval `type` value (domain/approvals). Because no role holds both the
+# propose and the approve code for a type, same-person approval is impossible at
+# the permission layer — defence in depth on top of the `decided_by !=
+# proposed_by` runtime check (§6.2). Admin holds no propose code, so an admin can
+# never reach a propose path (403); engineer holds no approve code.
+PROPOSE_CODE: dict[str, str] = {
+    "model_promotion": MODEL_PROMOTE_PROPOSE,
+    "scenario_activation": SCENARIO_ACTIVATE_PROPOSE,
+    "param_tuning": PARAM_TUNE_PROPOSE,
+}
+APPROVE_CODE: dict[str, str] = {
+    "model_promotion": MODEL_PROMOTE_APPROVE,
+    "scenario_activation": SCENARIO_ACTIVATE_APPROVE,
+    "param_tuning": PARAM_TUNE_APPROVE,
+}
+
+
 def has_permission(role: str, permission: str) -> bool:
     return permission in ROLE_PERMISSIONS.get(role, frozenset())
 

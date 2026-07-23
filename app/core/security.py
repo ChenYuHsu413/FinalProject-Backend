@@ -200,6 +200,65 @@ def get_principal(request: Request) -> Principal:
     )
 
 
+async def _require_role(request: Request, principal: Principal) -> None:
+    """Raise 400 (+ audit) if the caller has no valid role. Shared by the deps below."""
+    if principal.role is None:
+        await record_denied_attempt(
+            reason="missing_role",
+            correlation_id=principal.correlation_id,
+            source_ip=_source_ip(request),
+            method=request.method,
+            path=request.url.path,
+            user_id=principal.user_id,
+        )
+        raise AppError(
+            code="VALIDATION_ERROR",
+            message="Missing or invalid X-User-Role.",
+            status_code=400,
+        )
+
+
+async def enforce_permission(request: Request, principal: Principal, permission: str) -> None:
+    """Check a permission the caller must hold, recording an audit row on denial.
+
+    Extracted so routes whose required code is only known at request time (the
+    per-type approve/propose codes, whose code depends on the approval's `type`)
+    can run the same 403 + `authz.denied` audit as the static
+    ``require_permission`` dependency. Raises 403 if the role lacks the code.
+    """
+    if not has_permission(principal.role, permission):
+        await record_denied_attempt(
+            reason=f"missing_permission:{permission}",
+            correlation_id=principal.correlation_id,
+            source_ip=_source_ip(request),
+            method=request.method,
+            path=request.url.path,
+            user_id=principal.user_id,
+            role=principal.role,
+        )
+        raise AppError(
+            code="FORBIDDEN",
+            message="Role lacks required permission.",
+            status_code=403,
+            details={"role": principal.role, "required": permission},
+        )
+
+
+def require_role():
+    """Dependency: require a valid role but no specific code (400 if missing).
+
+    Used by the approval **propose** path, whose required code depends on the
+    body's `type` and is enforced with ``enforce_permission`` inside the handler.
+    """
+
+    async def _dependency(request: Request) -> Principal:
+        principal = get_principal(request)
+        await _require_role(request, principal)
+        return principal
+
+    return _dependency
+
+
 def require_permission(permission: str):
     """Dependency factory for the second-layer permission check.
 
@@ -211,36 +270,8 @@ def require_permission(permission: str):
 
     async def _dependency(request: Request) -> Principal:
         principal = get_principal(request)
-        if principal.role is None:
-            await record_denied_attempt(
-                reason="missing_role",
-                correlation_id=principal.correlation_id,
-                source_ip=_source_ip(request),
-                method=request.method,
-                path=request.url.path,
-                user_id=principal.user_id,
-            )
-            raise AppError(
-                code="VALIDATION_ERROR",
-                message="Missing or invalid X-User-Role.",
-                status_code=400,
-            )
-        if not has_permission(principal.role, permission):
-            await record_denied_attempt(
-                reason=f"missing_permission:{permission}",
-                correlation_id=principal.correlation_id,
-                source_ip=_source_ip(request),
-                method=request.method,
-                path=request.url.path,
-                user_id=principal.user_id,
-                role=principal.role,
-            )
-            raise AppError(
-                code="FORBIDDEN",
-                message="Role lacks required permission.",
-                status_code=403,
-                details={"role": principal.role, "required": permission},
-            )
+        await _require_role(request, principal)
+        await enforce_permission(request, principal, permission)
         return principal
 
     return _dependency

@@ -19,8 +19,10 @@ from app.core.redis import dispose_redis
 from app.core.security import TrustBoundaryMiddleware
 from app.core.settings import get_settings
 from app.domain.alarms import InvalidAlarmTransition
+from app.domain.approvals import InvalidApprovalTransition
 from app.domain.commands import InvalidCommandTransition
 from app.domain.devices import DeviceNotFound
+from app.domain.training import InvalidJobTransition
 from app.repositories.files.engine_repo import EngineDataNotFound
 from app.routers import authz, health
 from app.routers.engine import (
@@ -38,10 +40,13 @@ from app.routers.engine import (
 )
 from app.routers.governance import (
     alarms,
+    approvals,
     audit,
     commands,
     maintenance,
     snapshot,
+    system,
+    training,
     trends,
 )
 
@@ -83,7 +88,11 @@ async def _device_not_found_handler(request: Request, exc: DeviceNotFound) -> JS
 
 
 async def _invalid_transition_handler(
-    request: Request, exc: InvalidAlarmTransition | InvalidCommandTransition
+    request: Request,
+    exc: InvalidAlarmTransition
+    | InvalidCommandTransition
+    | InvalidApprovalTransition
+    | InvalidJobTransition,
 ) -> JSONResponse:
     return build_error_response(
         status_code=409,
@@ -119,6 +128,8 @@ def create_app() -> FastAPI:
     app.add_exception_handler(DeviceNotFound, _device_not_found_handler)
     app.add_exception_handler(InvalidAlarmTransition, _invalid_transition_handler)
     app.add_exception_handler(InvalidCommandTransition, _invalid_transition_handler)
+    app.add_exception_handler(InvalidApprovalTransition, _invalid_transition_handler)
+    app.add_exception_handler(InvalidJobTransition, _invalid_transition_handler)
 
     app.include_router(health.router, prefix=API_PREFIX)
     app.include_router(authz.router, prefix=API_PREFIX)
@@ -128,6 +139,9 @@ def create_app() -> FastAPI:
     app.include_router(alarms.router, prefix=API_PREFIX)
     app.include_router(maintenance.router, prefix=API_PREFIX)
     app.include_router(commands.router, prefix=API_PREFIX)
+    app.include_router(approvals.router, prefix=API_PREFIX)
+    app.include_router(training.router, prefix=API_PREFIX)
+    app.include_router(system.router, prefix=API_PREFIX)
     for engine_router in _ENGINE_ROUTERS:
         app.include_router(engine_router, prefix=API_PREFIX)
 
