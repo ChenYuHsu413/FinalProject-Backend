@@ -466,3 +466,70 @@ residual-recovery watcher.
 The §-example zero-padded sequence (`CMD-2026-000123`) would need a counter table;
 uuid-based ids are sufficient for the mock and remain unique. Revisit if a
 human-friendly monotonic sequence is required.
+
+---
+
+## Batch 6 — 命令子系統 (commands)
+
+### D6.1 Command state machine (transition table)
+
+`app/domain/commands.py`, pure logic. Legal transitions ONLY:
+
+| from | to | who |
+|---|---|---|
+| submitted | accepted | downstream/device (mock confirmer) |
+| submitted | rejected | validation/downstream |
+| submitted | timeout | worker timeout scan |
+| accepted | completed | device confirm |
+| accepted | failed | device |
+| accepted | timeout | worker timeout scan |
+
+`completed / failed / timeout / rejected` are terminal (no outgoing transitions).
+Every illegal transition raises `InvalidCommandTransition` → 409. Full transition
+matrix is unit-tested.
+
+### D6.2 Idempotency ≠ conflict
+
+- **Idempotency**: DB unique `(command_type, device, idempotency_key)`. A duplicate
+  submit returns the **original** command's current state with **HTTP 200** (not
+  409). A concurrent duplicate that loses the insert race raises `IntegrityError`,
+  which the service catches → rollback → return the original (concurrency test
+  asserts exactly one row). Implements the frontend §10.2 double-click guard.
+- **In-progress conflict** is separate: a `cycle.start` while a cycle is already
+  running (most recent live cycle command is a start) → **409 CONFLICT**.
+
+### D6.3 Timeout is worker-decided and terminal
+
+Only the worker's `scan_command_timeouts` (every 1s) marks a command `timeout`
+once `confirm_timeout_s` elapses since `submitted_at`. The API request path never
+decides timeout. Timeout presumes **neither success nor failure** (PROMPT §7,
+design-frontend §9.4) — HTTP 202 never means the device acted.
+
+### D6.4 Mock device confirmer
+
+`worker.mock_confirm_commands` (every 2s, MOCK_MODE) drives submitted→accepted
+then accepted→completed over two ticks (realistic delay), and deliberately leaves
+~20% of commands (deterministic by command_id hash) unconfirmed so they reach the
+`timeout` path. This is the basis for the batch-8 deploy command-flow demo. Swaps
+out for the real device/dispatcher interface later.
+
+### D6.5 E-Stop Request
+
+`safety.stop_request` command: `high_risk=True`, shorter confirm window
+(`confirm_timeout_s=5` vs 10), audit carries the high-risk flag, and all three
+roles may submit it (D1.5b). Same state machine; queue-priority is a future
+concern (single mock device now).
+
+### D6.6 Events
+
+`command:status` publishes on **every** transition (submitted/accepted/completed/
+failed/timeout); `mode:changed` publishes **only** when a `mode.switch` command
+reaches `completed` (ruling #1 — the backend is authoritative, Flask does not
+infer it). Both go on `ai_servo:command` with the §11 envelope, best-effort.
+
+### D6.7 202 semantics
+
+A fresh submit returns **202** with a body containing only submitted-semantics
+fields (`command_id, status, submitted_at, confirm_timeout_s`) — no `result` /
+`completed_at`. An idempotent replay returns **200** with the original command's
+current state. Both documented on the router so the contract test accepts them.

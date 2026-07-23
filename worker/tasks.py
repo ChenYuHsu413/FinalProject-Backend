@@ -87,6 +87,63 @@ async def sim_shap_diagnosis(ctx: dict[str, Any]) -> None:
         await simulator.publish_shap_diagnosis(pub, scenario)
 
 
+async def scan_command_timeouts(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Mark commands whose confirm window elapsed as `timeout` (worker-only, §3.1).
+
+    The API request path never decides timeout; only this scan does. Timeout is
+    terminal — it presumes neither success nor failure.
+    """
+    from datetime import UTC, datetime
+
+    from app.repositories.pg.command_repo import CommandRepository
+    from app.services.command_service import CommandService
+
+    pub = _publisher(ctx)
+    marked = 0
+    async with get_sessionmaker()() as session:
+        due = await CommandRepository(session).scan_timeouts(datetime.now(UTC))
+        service = CommandService(session, pub)
+        for cmd in due:
+            await service.mark_timeout(cmd)
+            marked += 1
+    return {"timed_out": marked}
+
+
+def _should_leave_unconfirmed(command_id: str) -> bool:
+    # Deterministic ~20%: leave some commands unconfirmed so the timeout path runs.
+    try:
+        return int(command_id.split("-")[1], 16) % 5 == 0
+    except (IndexError, ValueError):
+        return False
+
+
+async def mock_confirm_commands(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Mock device confirmer (DECISIONS D6.4): submitted→accepted→completed with a
+    two-tick delay, leaving ~20% unconfirmed so they reach `timeout`."""
+    if not get_settings().mock_mode:
+        return {"skipped": True}
+
+    from app.domain.commands import ACCEPTED, SUBMITTED
+    from app.repositories.pg.command_repo import CommandRepository
+    from app.services.command_service import CommandService
+
+    pub = _publisher(ctx)
+    async with get_sessionmaker()() as session:
+        repo = CommandRepository(session)
+        service = CommandService(session, pub)
+        # Finish ones already accepted.
+        accepted, _ = await repo.list(status=ACCEPTED, limit=100)
+        for cmd in accepted:
+            await service.complete(cmd.command_id)
+        # Accept freshly submitted (except the deliberately-unconfirmed fraction).
+        submitted, _ = await repo.list(status=SUBMITTED, limit=100)
+        for cmd in submitted:
+            if _should_leave_unconfirmed(cmd.command_id):
+                continue
+            await service.accept(cmd.command_id)
+    return {"ok": True}
+
+
 async def reverify_audit_chain(ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """Recompute the whole audit chain and persist the result.
 

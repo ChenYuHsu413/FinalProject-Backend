@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -116,4 +116,41 @@ class MaintenanceReport(Base):
     created_by: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Command(Base):
+    """Command lifecycle record (design-backend §3). Mutable state."""
+
+    __tablename__ = "commands"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    command_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    command_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    device: Mapped[str] = mapped_column(String(64), nullable=False)
+    scenario_id: Mapped[str | None] = mapped_column(String(64))
+    target_mode: Mapped[str | None] = mapped_column(String(32))  # for mode.switch
+    reason: Mapped[str | None] = mapped_column(Text)
+    params: Mapped[dict | None] = mapped_column(JSONB)
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="submitted")
+    confirm_timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    high_risk: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    operator: Mapped[str | None] = mapped_column(String(128))
+    role: Mapped[str | None] = mapped_column(String(32))
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
+    result: Mapped[str | None] = mapped_column(String(32))
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "command_type", "device", "idempotency_key", name="uq_commands_idempotency"
+        ),
     )

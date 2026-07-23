@@ -22,7 +22,7 @@ does, over a service token.
 > `"mock_mode": true` (from batch 3). HTTP 200/202 never means "the device did
 > it" — commands can end in `timeout` (batch 6).
 
-## Status — batch 5 of 8 done (警報 + 維修回報)
+## Status — batch 6 of 8 done (命令子系統)
 
 Implemented so far (PROMPT §5):
 
@@ -60,8 +60,16 @@ everywhere.
 snapshot alarm counts now real. All mutations audited; `alarm.ack` = operator +
 engineer (admin read-only).
 
-Not yet implemented (later batches): commands, approvals/training, retention,
-deployment hardening. See `docs/DECISIONS.md`.
+**Batch 6 — 命令子系統:** command state machine
+(`submitted→accepted→completed/failed/timeout` +`rejected`, pure in
+`app/domain/commands.py`), `/commands/*` endpoints (202=submitted only),
+idempotency via DB unique `(command_type, device, idempotency_key)` (replay→200,
+distinct from in-progress conflict→409), worker-only timeout scan, mock device
+confirmer, E-Stop (`high_risk`, shorter timeout, all roles), `command:status` on
+every transition + `mode:changed` only on mode-command completion.
+
+Not yet implemented (later batches): approvals/training, retention, deployment
+hardening. See `docs/DECISIONS.md`.
 
 ## Endpoints
 
@@ -89,6 +97,11 @@ deployment hardening. See `docs/DECISIONS.md`.
 | POST | `/api/v1/alarms/{id}/ack`, `/resolve` | `alarm.ack` (operator/engineer) |
 | POST | `/api/v1/maintenance-reports` | `maintenance.report` |
 | GET | `/api/v1/maintenance-reports` | `alarm.read` |
+| POST | `/api/v1/commands/cycle/start` | `cycle.start` |
+| POST | `/api/v1/commands/cycle/stop` | `cycle.stop` |
+| POST | `/api/v1/commands/mode` | `mode.switch` |
+| POST | `/api/v1/commands/estop-request` | `safety.stop_request` |
+| GET | `/api/v1/commands`, `/commands/{id}` | `dashboard.read` |
 
 Engine endpoints read files under `ENGINE_DATA_DIR`; missing data / unknown
 scenario → documented **404**. In `MOCK_MODE` the worker generates the files and
