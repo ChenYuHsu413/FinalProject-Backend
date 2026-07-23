@@ -32,6 +32,7 @@ from app.domain.commands import (
     TIMEOUT,
     transition,
 )
+from app.domain.devices import get_device
 from app.events import channels
 from app.events.publisher import EventPublisher
 from app.repositories.pg.command_repo import CommandRepository
@@ -100,16 +101,37 @@ class CommandService:
         target_mode: str | None = None,
     ) -> tuple[Command, bool]:
         """Submit a command. Returns (command, created). created=False for a duplicate."""
+        # Validate the device (commands must be at least as strict as reads — D6.8).
+        get_device(device)  # raises DeviceNotFound -> 404
+
         existing = await self.repo.get_by_idempotency(command_type, device, idempotency_key)
         if existing is not None:
             return existing, False  # idempotent replay → original current state, HTTP 200
 
-        # In-progress conflict is distinct from idempotency (D6.2).
+        # General in-progress conflict (design-backend §3.3, D6.8): a command of the
+        # same (device, type) already awaiting confirmation blocks a new one. This
+        # is distinct from idempotency (same key → 200 replay above). Applies to
+        # E-Stop too: a second request while one is pending → 409 + original id.
+        pending = await self.repo.active_pending(device, command_type)
+        if pending is not None:
+            # Same key that slipped past the check above (concurrent replay) → 200.
+            if pending.idempotency_key == idempotency_key:
+                return pending, False
+            raise AppError(
+                code="CONFLICT",
+                message=f"a {command_type} for this device is already awaiting confirmation",
+                status_code=409,
+                details={"pending_command_id": pending.command_id, "status": pending.status},
+            )
+
+        # Additional cycle-specific conflict: a cycle already *running* (a completed
+        # start not yet stopped) blocks a new start.
         if command_type == CYCLE_START and await self.repo.is_cycle_running(device):
             raise AppError(
                 code="CONFLICT",
                 message="a cycle is already running on this device",
                 status_code=409,
+                details={"reason": "cycle_running"},
             )
 
         high_risk = command_type == SAFETY_STOP_REQUEST

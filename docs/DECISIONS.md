@@ -533,3 +533,23 @@ A fresh submit returns **202** with a body containing only submitted-semantics
 fields (`command_id, status, submitted_at, confirm_timeout_s`) — no `result` /
 `completed_at`. An idempotent replay returns **200** with the original command's
 current state. Both documented on the router so the contract test accepts them.
+
+### D6.8 In-progress conflict is a general rule; commands validate the device (batch-6 review)
+
+Two fixes after the batch-6 review:
+
+1. **General pending conflict** (design-backend §3.3, not just cycle-start-vs-running).
+   `submit` rejects a new command when one of the same `(device, command_type)` is
+   already in `submitted`/`accepted` → **409 CONFLICT** with
+   `details.pending_command_id` so the UI can show "same command already awaiting
+   confirmation". This applies to **E-Stop** too — a second request while one is
+   pending returns 409 + the original command_id (correct and safe: the first is
+   already in the highest-priority queue). `idempotency_key` only guards a single
+   click's replay (→ 200); a new key seconds later is a *new* command and would
+   otherwise stack duplicates (worsened by the mock confirmer leaving ~20%
+   unconfirmed). The cycle *running* check (a completed start not yet stopped)
+   remains as an additional cycle-specific conflict.
+2. **Device validation on commands.** `submit` resolves the device via
+   `app/domain/devices.py::get_device` → unknown device is **404**, consistent with
+   the snapshot/trends endpoints (batch 4). Commands are a more dangerous surface
+   than reads and must be at least as strict.

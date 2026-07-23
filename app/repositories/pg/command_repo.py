@@ -39,6 +39,24 @@ class CommandRepository:
         )
         return row.scalar_one_or_none()
 
+    async def active_pending(self, device: str, command_type: str) -> Command | None:
+        """An existing command of this (device, type) awaiting confirmation.
+
+        General in-progress conflict per design-backend §3.3: a command in
+        submitted/accepted for the same device+type blocks a new one.
+        """
+        row = await self.session.execute(
+            select(Command)
+            .where(
+                Command.device == device,
+                Command.command_type == command_type,
+                Command.status.in_((SUBMITTED, ACCEPTED)),
+            )
+            .order_by(Command.id.desc())
+            .limit(1)
+        )
+        return row.scalar_one_or_none()
+
     async def is_cycle_running(self, device: str) -> bool:
         """True if the most recent live cycle command for the device is a start."""
         row = await self.session.execute(

@@ -188,6 +188,51 @@ async def test_cycle_conflict_is_409(sm, iclient):
     assert r.json()["error"]["code"] == "CONFLICT"
 
 
+# --- general in-progress (pending) conflict + device validation (D6.8) -------
+async def test_pending_conflict_blocks_second_command(sm, iclient):
+    # A cycle.stop is pending; a NEW key for the same (device, type) → 409, not a
+    # second stacked command.
+    p = {"device": "AXIS-04", "idempotency_key": "stop-1"}
+    r1 = await iclient.post("/api/v1/commands/cycle/stop", headers=_headers("operator"), json=p)
+    assert r1.status_code == 202
+    r2 = await iclient.post(
+        "/api/v1/commands/cycle/stop",
+        headers=_headers("operator"),
+        json={"device": "AXIS-04", "idempotency_key": "stop-2"},  # different key
+    )
+    assert r2.status_code == 409
+    err = r2.json()["error"]
+    assert err["code"] == "CONFLICT"
+    assert err["details"]["pending_command_id"] == r1.json()["command_id"]
+
+
+async def test_pending_conflict_applies_to_estop(sm, iclient):
+    r1 = await iclient.post(
+        "/api/v1/commands/estop-request",
+        headers=_headers("operator"),
+        json={"device": "AXIS-04", "idempotency_key": "es-1"},
+    )
+    assert r1.status_code == 202
+    r2 = await iclient.post(
+        "/api/v1/commands/estop-request",
+        headers=_headers("operator"),
+        json={"device": "AXIS-04", "idempotency_key": "es-2"},
+    )
+    assert r2.status_code == 409  # already in the highest-priority queue
+    assert r2.json()["error"]["details"]["pending_command_id"] == r1.json()["command_id"]
+
+
+async def test_unknown_device_is_404(sm, iclient):
+    # Commands must be at least as strict as reads (snapshot 404s on unknown device).
+    r = await iclient.post(
+        "/api/v1/commands/estop-request",
+        headers=_headers("operator"),
+        json={"device": "AXIS-99", "idempotency_key": "bad-dev"},
+    )
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "NOT_FOUND"
+
+
 # --- worker-only timeout -----------------------------------------------------
 async def test_timeout_is_worker_decided_and_terminal(sm):
     from app.repositories.pg.command_repo import CommandRepository
