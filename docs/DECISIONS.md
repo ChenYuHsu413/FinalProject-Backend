@@ -342,3 +342,14 @@ depends on. Deeply nested / variable blobs (L3 pools, SHAP force plots) are type
 `dict`/`list` to pass through faithfully while keeping their container field names
 exact. Engine reads require `dashboard.read` (all roles) — L3 uses `model.read` —
 enforced via `require_permission`, on top of the service token.
+
+### D3.6 Reads require identity headers → Flask BFF must always send them
+
+Engine (and governance) **read** endpoints gate on a permission via
+`require_permission`, which raises 400 if `X-User-Role` is absent/invalid. This is
+**stricter than the middleware minimum** (D1.4: the trust boundary only *requires*
+the three identity headers on mutations). Consequence and contract for the Flask
+BFF: it must attach `X-Correlation-ID` / `X-User-ID` / `X-User-Role` on **every**
+request — reads included — not only mutations. A read without a valid role → 400.
+This is intentional: per-role read gating + a caller identity for auditing on
+every call. (Confirmed per batch-3 review; complements D3.5.)
