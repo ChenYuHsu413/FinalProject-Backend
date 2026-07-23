@@ -21,6 +21,9 @@ htmlcov/
 /srv/data/
 *.local
 
+# Local portable Postgres (binaries + data dir) created by scripts/local_pg.ps1
+.localpg/
+
 # OS / editor
 .DS_Store
 .idea/

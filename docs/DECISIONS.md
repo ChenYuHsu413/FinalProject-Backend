@@ -256,6 +256,25 @@ batch touching the DB **must** include:
    where **interfering env vars are already set** (e.g. `SERVICE_TOKEN`), so a
    test that only passes because of a clean local env is caught.
 
+**The standard local tool** is `scripts/local_pg.ps1` (committed): it downloads
+the official portable PostgreSQL 16 binaries (no Docker, no admin), initdb's a
+trust-auth cluster under `.localpg/` (gitignored) on port 15432 (outside the
+Hyper-V reserved exclusion ranges that block 5432/5433), and starts it. The
+required verification is then:
+
+```powershell
+pwsh scripts/local_pg.ps1                      # start local PG :15432
+$env:SERVICE_TOKEN="ci-test-token"             # interfering env (rule 2)
+$env:DATABASE_URL="postgresql+asyncpg://postgres@localhost:15432/aiservo_test"
+$env:TEST_DATABASE_URL=$env:DATABASE_URL
+python -m alembic upgrade head                 # rule 1 — capture output
+python -m pytest -q                            # full suite on real PG
+```
+
+This was run for the batch-2 fix: `alembic upgrade head` → `Running upgrade ->
+0001_audit` (rc 0, idempotent on re-run); `pytest` → 57 passed; CI (real
+`postgres:16` service) also green.
+
 Root causes fixed in the post-review pass (each was masked until the previous
 was fixed):
 
