@@ -12,19 +12,22 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.core.db import dispose_engine
 from app.core.errors import register_exception_handlers
 from app.core.security import TrustBoundaryMiddleware
 from app.core.settings import get_settings
 from app.routers import authz, health
+from app.routers.governance import audit
 
 API_PREFIX = "/api/v1"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Batch 2+: open DB pool / Redis; dev: start mock simulator.
+    # Batch 3+: open Redis / start mock simulator here.
     yield
-    # Batch 2+: dispose connections.
+    # The DB engine is lazily created on first request; dispose it on shutdown.
+    await dispose_engine()
 
 
 def create_app() -> FastAPI:
@@ -43,6 +46,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router, prefix=API_PREFIX)
     app.include_router(authz.router, prefix=API_PREFIX)
+    app.include_router(audit.router, prefix=API_PREFIX)
 
     return app
 

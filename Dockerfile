@@ -10,6 +10,9 @@ WORKDIR /srv/app
 # Install runtime dependencies first (better layer caching).
 COPY pyproject.toml README.md ./
 COPY app ./app
+COPY worker ./worker
+COPY alembic ./alembic
+COPY alembic.ini ./
 RUN pip install --no-cache-dir .
 
 # Non-root runtime user.

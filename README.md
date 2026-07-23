@@ -22,27 +22,50 @@ does, over a service token.
 > `"mock_mode": true` (from batch 3). HTTP 200/202 never means "the device did
 > it" — commands can end in `timeout` (batch 6).
 
-## Status — batch 1 of 8 (骨架 + CI)
+## Status — batch 2 of 8 done (稽核子系統)
 
-Implemented (PROMPT §5, batch 1):
+Implemented so far (PROMPT §5):
 
-- App factory + lifespan seam (`app/main.py`)
-- Settings via pydantic-settings (`app/core/settings.py`)
-- Unified error format (`app/core/errors.py`, design-backend §1.2)
-- Trust boundary: service token + `X-User-*` middleware (`app/core/security.py`, §1)
-- Role → permission table + `GET /api/v1/authz/permissions` (`app/core/permissions.py`)
-- CI: ruff + pytest + docker build (`.github/workflows/ci.yml`)
+**Batch 1 — 骨架 + CI:** app factory + lifespan, settings, unified error format
+(design-backend §1.2), trust boundary (service token + `X-User-*` middleware, §1),
+role→permission table + `GET /api/v1/authz/permissions`, CI (ruff + pytest +
+docker build).
 
-Not yet implemented (later batches): audit subsystem, engine read endpoints +
-simulator, snapshot/trends, alarms, commands, approvals/training, retention,
-deployment hardening. See `docs/DECISIONS.md` for per-batch rulings.
+**Batch 2 — 稽核子系統:** PostgreSQL append-only hash chain (`app/domain/audit.py`,
+design-backend §5.1), 3-layer append-only protection in an Alembic migration
+(REVOKE + BEFORE UPDATE/DELETE/TRUNCATE triggers), `/audit/*` endpoints, arq
+worker hourly re-verify, and failed-attempt (`authz.denied`) auditing at the
+trust boundary. All mutations flow through the audit service.
 
-## Endpoints (batch 1)
+Not yet implemented (later batches): engine read endpoints + simulator,
+snapshot/trends, alarms, commands, approvals/training, retention, deployment
+hardening. See `docs/DECISIONS.md` for per-batch rulings.
+
+## Endpoints
 
 | Method | Path | Auth |
 |---|---|---|
 | GET | `/api/v1/health` | none (healthcheck) |
 | GET | `/api/v1/authz/permissions` | service token |
+| POST | `/api/v1/audit/events` | service token (no `X-User-*`) |
+| GET | `/api/v1/audit/events` | `audit.read` (operator → own only) |
+| GET | `/api/v1/audit/chain/verify` | `audit.read` |
+| GET | `/api/v1/audit/export` | `audit.export` (admin) |
+
+## Database & worker
+
+```bash
+# apply migrations (needs DATABASE_URL, e.g. from .env)
+alembic upgrade head
+# run the background worker (hourly audit-chain re-verify)
+arq worker.main.WorkerSettings
+```
+
+With docker compose, run migrations once after the stack is up:
+
+```bash
+docker compose run --rm api alembic upgrade head
+```
 
 ## Local development
 
@@ -66,8 +89,8 @@ curl -H "Authorization: Bearer <SERVICE_TOKEN>" localhost:8000/api/v1/authz/perm
 docker compose up --build
 ```
 
-Brings up `api` (bound to `127.0.0.1:8000`) plus `postgres`/`redis` (internal
-only; not used by the app until later batches).
+Brings up `api` (bound to `127.0.0.1:8000`), `worker`, and `postgres`/`redis`
+(internal only). Run `alembic upgrade head` once before hitting audit endpoints.
 
 ## Tests & lint
 
@@ -82,8 +105,13 @@ pytest -q
 ```
 app/
   main.py            # app factory + lifespan
-  core/              # settings, errors, permissions, security (trust boundary)
-  routers/           # health, authz  (governance/ and engine/ added later)
-tests/               # unit + middleware tests
+  core/              # settings, db, errors, permissions, security (trust boundary)
+  domain/            # pure logic (audit hash chain)  — no IO
+  repositories/pg/   # SQLAlchemy models + audit repository
+  services/          # orchestration (audit service)
+  routers/           # health, authz, governance/audit  (engine/ added later)
+worker/              # arq worker (hourly audit-chain re-verify)
+alembic/             # migrations (append-only audit protection)
+tests/               # unit (no DB) + integration (needs PG) + schemathesis
 docs/                # 3 specs + DECISIONS.md
 ```

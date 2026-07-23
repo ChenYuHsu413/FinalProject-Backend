@@ -140,3 +140,104 @@ The lifespan and compose file are structured as the seams where they attach.
 added to compose, decide whether it is pulled as a pre-built image from another
 repo/registry or built from a relative path (git submodule / sibling checkout).
 Record the choice here at that time.
+
+---
+
+## Batch 2 — 稽核子系統 (audit)
+
+### D2.1 Genesis block
+
+The first entry's `prev_hash` is `GENESIS_HASH = "0" * 64` (64 hex zeros),
+mirroring the fallback hash-chain convention in 後端資料規格書 §五
+(`"prev_hash": "0000..."`). `verify_chain([])` on an empty table is vacuously
+`verified: true`. Tests cover empty / single / multi / tampered / broken-link /
+deleted-middle (`tests/test_audit_domain.py`).
+
+### D2.2 Hash field scope (what enters `entry_hash`)
+
+`entry_hash = SHA256(prev_hash + canonical_json(business_view(entry)))`, where
+`business_view` is the fixed field list in `app/domain/audit.py::HASHED_FIELDS`.
+
+- **Included** (all business fields): `event_id, ts, correlation_id, command_id,
+  user_id, role, source_ip, action, target_device, scenario_id, old_value,
+  new_value, reason, proposed_at, approved_at, executed_at, result,
+  model_version, mode`.
+- **Excluded**: `id` (DB autoincrement) and `created_at` (DB `server_default now()`)
+  — DB-generated, so the hash can be computed *before* insert; and `entry_hash`
+  itself (the output).
+- `prev_hash` is mixed in by **concatenation** per the formula, not embedded in
+  the JSON body.
+- `ts` is the app-set business event time (UTC) and **is** hashed; `created_at`
+  is separate DB bookkeeping and is **not**. Timestamps are rendered for hashing
+  by one function (`_to_iso`, fixed-width `…%H:%M:%S.%fZ`) used both at write and
+  at re-verify, so a value and its DB round-trip hash identically — no drift.
+
+`canonical_json`: `sort_keys=True, separators=(",",":"), ensure_ascii=False`.
+`ensure_ascii` is off so Chinese device/scenario names hash by their real bytes.
+Single tested function — changing it breaks every stored hash.
+
+Known edge (`old_value`/`new_value` are JSONB): the hash is computed from the
+Python dict at write time; re-verify reads it back through JSONB. Key order is
+irrelevant (we sort), and strings/ints/typical decimals round-trip identically,
+so this is safe for the values we store. If a future field needs exotic numeric
+precision inside these blobs, add a normalization step before hashing.
+
+### D2.3 `/audit/chain/verify` returns the worker's last result
+
+The endpoint does **not** live-recompute the whole table (a slow query at scale).
+It returns the latest row from `audit_chain_verifications`, written by the worker
+(`reverify_audit_chain`) hourly + once on worker startup. This matches the admin
+UI "VERIFIED, last checked 14:18" (design-frontend §7.5). Before the first worker
+run the endpoint returns `verified: null, reason: "pending first verification"`.
+
+### D2.4 POST /audit/events is service-only, exempt from X-User-* headers
+
+design-backend §5.2 marks `POST /audit/events` "(service token only)" — Flask
+deposits its own events (login/logout/lockout) where the acting identity is in
+the **body**, not the caller's session. So this single path is exempt from the
+mutation X-User-* requirement (`_SERVICE_MUTATION_PATHS` in `security.py`); it
+still requires the service token, and the correlation id still flows. This is a
+deliberate, narrow exception to PROMPT §7's blanket "mutations need the three
+headers" rule.
+
+### D2.5 Append-only: 3 layers, and what each test can prove
+
+1. **App layer** — `AuditRepository` exposes no update/delete method (by
+   construction; not unit-testable).
+2. **DB privileges** — `REVOKE UPDATE, DELETE ON audit_events FROM PUBLIC`
+   (documents intent; the table *owner* bypasses REVOKE, so this is not the real
+   backstop and is not what the test targets).
+3. **Triggers** — `BEFORE UPDATE OR DELETE` (row) **and** `BEFORE TRUNCATE`
+   (statement) triggers `RAISE EXCEPTION`. These block **even the owner**, so
+   this is the real enforcement and the layer the integration test attacks
+   directly (`test_trigger_blocks_update/delete/truncate`). TRUNCATE is covered
+   because it bypasses row-level triggers.
+
+The tamper-detection test bypasses the trigger with `ALTER TABLE … DISABLE
+TRIGGER` (simulating a privileged DB attacker) to prove the hash chain still
+*detects* the change even if a layer is defeated.
+
+### D2.6 Concurrency: appends serialized by advisory lock
+
+`append()` takes `pg_advisory_xact_lock(_AUDIT_LOCK_KEY)` before reading the head
+hash and inserting, so concurrent writers cannot both read the same `prev_hash`
+and fork the chain. The lock is transaction-scoped (released at COMMIT/ROLLBACK).
+
+### D2.7 Migration re-entrancy & downgrade
+
+The raw DDL (function/trigger) uses `CREATE OR REPLACE` / `DROP … IF EXISTS`, so
+it is safe to re-apply on an already-migrated DB. `downgrade()` **raises**
+rather than dropping `audit_events` — tearing down the tamper-evident record is
+never an implicit operation (batch-2 acceptance).
+
+### D2.8 Failed attempts are audited (recursion-safe)
+
+The trust boundary records every rejection — bad service token, missing/invalid
+identity headers, and permission denials — as an `authz.denied` audit row
+(`record_denied_attempt`). This powers admin security monitoring
+(design-frontend §7.5 "login failed ×3"). It opens its **own** session (the
+middleware has no DI session) and **swallows all errors**, so an audit-write
+failure can neither break the 4xx response nor trigger another audit write (no
+recursion). Consequence to revisit: a flood of bad-token requests becomes a
+flood of audit writes — rate-limiting is deferred to the deployment/hardening
+batch.

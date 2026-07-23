@@ -31,6 +31,20 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  worker:
+    build: .
+    command: ["arq", "worker.main.WorkerSettings"]
+    env_file:
+      - .env
+    volumes:
+      - engine_data:/srv/data/engine
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   postgres:
     image: postgres:16
     environment:

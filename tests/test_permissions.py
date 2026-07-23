@@ -32,30 +32,37 @@ def test_has_permission_and_permissions_for():
 
 
 class _FakeRequest:
+    """Minimal Request stand-in. No DB configured, so the denied-attempt audit
+    inside require_permission fails and is swallowed — exactly what we want to
+    assert stays non-fatal."""
+
     def __init__(self, role, user_id="u-1", cid="cid-1"):
         self.state = type("S", (), {})()
         self.state.user_role = role
         self.state.user_id = user_id
         self.state.correlation_id = cid
+        self.method = "POST"
+        self.url = type("U", (), {"path": "/api/v1/x"})()
+        self.client = type("C", (), {"host": "10.0.0.1"})()
 
 
-def test_require_permission_allows_authorized_role():
+async def test_require_permission_allows_authorized_role():
     dep = require_permission("cycle.start")
-    principal = dep(_FakeRequest("operator"))
+    principal = await dep(_FakeRequest("operator"))
     assert isinstance(principal, Principal)
     assert principal.role == "operator"
 
 
-def test_require_permission_forbids_unauthorized_role():
+async def test_require_permission_forbids_unauthorized_role():
     dep = require_permission("system.settings")
     with pytest.raises(AppError) as exc:
-        dep(_FakeRequest("operator"))
+        await dep(_FakeRequest("operator"))
     assert exc.value.code == "FORBIDDEN"
     assert exc.value.status_code == 403
 
 
-def test_require_permission_rejects_missing_role():
+async def test_require_permission_rejects_missing_role():
     dep = require_permission("cycle.start")
     with pytest.raises(AppError) as exc:
-        dep(_FakeRequest(None))
+        await dep(_FakeRequest(None))
     assert exc.value.status_code == 400
