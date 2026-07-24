@@ -22,7 +22,7 @@ does, over a service token.
 > `"mock_mode": true` (from batch 3). HTTP 200/202 never means "the device did
 > it" — commands can end in `timeout` (batch 6).
 
-## Status — batch 6 of 8 done (命令子系統)
+## Status — PROMPT §5 batches 1–7 done, plus the external model service
 
 Implemented so far (PROMPT §5):
 
@@ -68,8 +68,36 @@ distinct from in-progress conflict→409), worker-only timeout scan, mock device
 confirmer, E-Stop (`high_risk`, shorter timeout, all roles), `command:status` on
 every transition + `mode:changed` only on mode-command completion.
 
-Not yet implemented (later batches): approvals/training, retention, deployment
-hardening. See `docs/DECISIONS.md`.
+**Batch 7 — 治理核准 + 訓練 REST + 整合狀態:** approval state machine
+(`pending→approved|rejected|withdrawn`, all decided states terminal → double-decide
+= 409, pure in `app/domain/approvals.py`), `/approvals/*` (propose / withdraw /
+detail filled the §6.2 spec gaps) and `/training/jobs/*`. An approved
+`param_tuning` runs the five-check chain (whitelist → type → bounds →
+rate-of-change → device-state, short-circuiting); a failure marks the side effect
+`failed` + audits + opens an alarm while the approval stays `approved`. Training
+jobs walk `queued→running→evaluating→shadow→passed` on the mock worker; entering
+`shadow` registers a candidate in `models.jsonl` and `passed` auto-spawns a
+`model_promotion` approval, closing the train→propose→approve→`model:changed`
+loop (the registry rewrite is atomic). `GET /system/integrations` probes
+Redis/Postgres, degrades to `disconnected` instead of 500ing, and carries the
+mandated `mock_mode` flag.
+
+**Batch 8 — 外部模型服務:** snapshot `dv` now comes from a real trained model over
+HTTP instead of the deterministic generator. Two independently-swappable seams:
+`app/domain/servo_features.py` (SEAM A — the aggregated feature row, data team)
+and `app/repositories/http/model_service.py` (SEAM B — the inference service,
+model team; changing models = `MODEL_SERVICE_URL` + one field mapping).
+`MODEL_SOURCE` defaults to `mock`, so tests and CI make no outbound calls. Every
+failure mode (timeout / 4xx / 5xx / malformed body) degrades silently back to the
+generated value — the first screen must always render — and results are cached
+for `MODEL_CACHE_TTL_S` because the measured RTT is ~0.9s. See DECISIONS D8.1.
+
+Not yet implemented: **PROMPT §5 batch 8 — retention 合併端點 + 匯出 + 部署硬化**
+(no `deploy/` directory yet: prod compose, Caddyfile, `gcp-setup.sh`, `deploy.sh`,
+`pg_dump` backups, `docs/DEPLOYMENT.md`). Note the numbering collision: the
+external-model-service work above is *also* labelled "batch 8" by its change order
+and by DECISIONS D8.1 — they are different pieces of work. See
+`docs/DECISIONS.md`.
 
 ## Endpoints
 
@@ -102,10 +130,23 @@ hardening. See `docs/DECISIONS.md`.
 | POST | `/api/v1/commands/mode` | `mode.switch` |
 | POST | `/api/v1/commands/estop-request` | `safety.stop_request` |
 | GET | `/api/v1/commands`, `/commands/{id}` | `dashboard.read` |
+| GET | `/api/v1/approvals`, `/approvals/summary`, `/approvals/{id}` | `approval.read` |
+| POST | `/api/v1/approvals` (propose) | per-type propose code (engineer; admin → 403) |
+| POST | `/api/v1/approvals/{id}/{approve,reject}` | `approval.read` + per-type approve code |
+| POST | `/api/v1/approvals/{id}/withdraw` | proposer only (else 403) |
+| POST | `/api/v1/training/jobs`, `/training/jobs/{id}/cancel` | `model.retrain` |
+| GET | `/api/v1/training/jobs`, `/training/jobs/{id}` | `model.read` |
+| GET | `/api/v1/shadow/comparisons` | `model.read` |
+| GET | `/api/v1/system/integrations` | `system.settings` (admin) |
 
 Engine endpoints read files under `ENGINE_DATA_DIR`; missing data / unknown
 scenario → documented **404**. In `MOCK_MODE` the worker generates the files and
 publishes events (channels `ai_servo:*`, §11 envelope).
+
+`/ui/snapshot`'s `dv` calls the external model service when `MODEL_SOURCE=http`
+and `MODEL_SERVICE_URL` is set; it degrades to the built-in generator on any
+failure, so the endpoint's contract and status codes are unchanged either way.
+The default (`MODEL_SOURCE=mock`) makes no outbound calls.
 
 ## Database & worker
 
