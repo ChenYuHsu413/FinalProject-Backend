@@ -22,6 +22,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.responses import UTF8JSONResponse
+
 # Canonical error codes and their default HTTP status.
 ERROR_STATUS: dict[str, int] = {
     "VALIDATION_ERROR": 400,
@@ -100,7 +102,7 @@ def build_error_response(
             "details": _json_safe(details or {}),
         }
     }
-    response = JSONResponse(status_code=status_code, content=payload)
+    response = UTF8JSONResponse(status_code=status_code, content=payload)
     if correlation_id:
         response.headers["X-Correlation-ID"] = correlation_id
     return response

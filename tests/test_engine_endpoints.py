@@ -121,6 +121,32 @@ async def test_missing_data_is_404_not_500(empty_engine_client):
     assert resp.json()["error"]["code"] == "NOT_FOUND"
 
 
+async def test_cjk_payloads_are_utf8_with_declared_charset(engine_client):
+    """The CJK strings the frontend hit as surrogate-escape mojibake.
+
+    Two things must hold together: the body is real UTF-8 (no lone surrogates),
+    and Content-Type declares the charset so a client cannot fall back to a host
+    code page and produce ``"Normal \\udce2\\udc86\\udc92 Diagnosis"``.
+    """
+    cm = await engine_client.get(f"/api/v1/control-mode?scenario_id={S}", headers=HEADERS)
+    en = await engine_client.get(f"/api/v1/ensemble/status?scenario_id={S}", headers=HEADERS)
+
+    for resp in (cm, en):
+        assert resp.headers["content-type"] == "application/json; charset=utf-8"
+        resp.content.decode("utf-8")  # raises if the body is not valid UTF-8
+
+    state_machine = cm.json()["state_machine"]
+    assert "Normal → Diagnosis" in state_machine
+    assert state_machine["Normal → Diagnosis"] == "殘差連續 > 閾值 × 3 個週期 (自動觸發)"
+
+    body = en.json()
+    assert body["single_model"]["reason"] == "LightGBM 優先策略 (2% tie threshold)"
+    assert body["rule"].startswith("優先採用內建模型")
+
+    texts = [*state_machine, *state_machine.values(), body["single_model"]["reason"], body["rule"]]
+    assert not any("\ud800" <= ch <= "\udfff" for text in texts for ch in text)
+
+
 async def test_fallback_events_pagination(engine_client):
     resp = await engine_client.get("/api/v1/fallback/events?page=1&limit=2", headers=HEADERS)
     assert resp.status_code == 200

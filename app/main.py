@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from app.core.db import dispose_engine
 from app.core.errors import build_error_response, correlation_id_of, register_exception_handlers
 from app.core.redis import dispose_redis
+from app.core.responses import UTF8JSONResponse
 from app.core.security import TrustBoundaryMiddleware
 from app.core.settings import get_settings
 from app.domain.alarms import InvalidAlarmTransition
@@ -118,6 +119,9 @@ def create_app() -> FastAPI:
         title="AI SERVO PLATFORM Backend",
         version=settings.api_version,
         lifespan=lifespan,
+        # Spell out charset=utf-8 so clients never fall back to a host code page
+        # and mangle the CJK strings in the engine payloads (see UTF8JSONResponse).
+        default_response_class=UTF8JSONResponse,
     )
 
     # Trust boundary runs before routing.
