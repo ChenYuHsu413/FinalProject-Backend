@@ -41,6 +41,10 @@ packages = ["app", "worker"]
 target-version = "py312"
 line-length = 100
 src = ["app", "tests"]
+# ruff governs Python source only. From 0.16 it also formats code blocks inside
+# markdown, which would rewrite the illustrative snippets in the spec documents
+# under docs/ — those are the authoritative specs, not source we own.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "W"]
