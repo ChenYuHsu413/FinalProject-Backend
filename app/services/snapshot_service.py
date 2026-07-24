@@ -13,13 +13,18 @@ the first screen — it degrades to computed/representative values.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain import timeseries as ts
 from app.domain.devices import get_device
+from app.domain.servo_features import synth_features
+from app.repositories.http import model_service
 from app.repositories.pg.alarm_repo import AlarmRepository
+
+logger = logging.getLogger("app.snapshot")
 
 SCHEMA_VERSION = "1.0"
 
@@ -38,6 +43,14 @@ def _status_for(value: float, threshold: float) -> str:
     return "critical"
 
 
+def _float_or(value: object, default: float) -> float:
+    """Coerce an external-service field; a junk value must not 500 the snapshot."""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
 def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -48,7 +61,23 @@ async def build_snapshot(session: AsyncSession, device_id: str) -> dict:
     # Real alarm counts (batch 5, replacing the batch-4 placeholder — DECISIONS D4.2).
     alarms = await AlarmRepository(session).counts(device.id)
 
+    # dv prefers the external model (batch 8, DECISIONS D8.1); the deterministic
+    # generator stays the fallback. The snapshot must always render the first
+    # screen (module docstring), so a model outage degrades silently, never 5xx.
     dv_value = ts.current_value("dv", device.id)
+    dv_source = "generated"
+    try:
+        pred = await model_service.predict(device.id, synth_features(device.id))
+        dv_value = pred.dv
+        dv_source = "model"
+    except model_service.ModelServiceError:
+        pass  # keep the generated value
+    logger.debug("snapshot dv for %s from %s", device.id, dv_source)
+
+    # Model metadata comes from the same service; representative values when it
+    # is disabled or unreachable.
+    model_info = await model_service.info()
+
     residual_value = ts.current_value("residual", device.id)
     residual_margin = max(0.0, (_RESIDUAL_THRESHOLD - residual_value) / _RESIDUAL_THRESHOLD * 100)
 
@@ -74,7 +103,10 @@ async def build_snapshot(session: AsyncSession, device_id: str) -> dict:
             "status": "in_threshold" if residual_value <= _RESIDUAL_THRESHOLD else "exceeded",
         },
         "alarms": alarms,
-        "model": {"active_version": "v3.2.0", "scenario": device.scenario_id},
+        "model": {
+            "active_version": str(model_info.get("model_version") or "v3.2.0"),
+            "scenario": device.scenario_id,
+        },
         "pipeline": {
             "stages": [
                 {"name": "EtherCAT", "metric": "50kHz", "status": "ok"},
@@ -88,7 +120,11 @@ async def build_snapshot(session: AsyncSession, device_id: str) -> dict:
         "health_cards": {
             "comm": {"uptime_pct": 99.98, "packets_lost": 0, "status": "ok"},
             "data_quality": {"score_pct": 99.5, "nan_pct": 0.1, "status": "ok"},
-            "model": {"r2": 0.94, "drift_pct": 12, "status": "watch"},
+            "model": {
+                "r2": _float_or(model_info.get("reg_r2"), 0.94),
+                "drift_pct": 12,
+                "status": "watch",
+            },
             "fallback": {"failed": 0, "chain_ready": "RF→PID", "status": "ok"},
             "latency": {"inference_ms": 0.31, "p99_ms": 0.45, "status": "ok"},
         },

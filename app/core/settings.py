@@ -18,6 +18,9 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        # The batch-8 `model_*` fields collide with pydantic's default protected
+        # namespace; this class has no BaseModel API to shadow, so drop it.
+        protected_namespaces=(),
     )
 
     # Application
@@ -40,9 +43,22 @@ class Settings(BaseSettings):
     # Mock simulator — used from batch 3 onward.
     mock_mode: bool = True
 
+    # Model service (batch 8) — the external inference service (SEAM B). When the
+    # model team delivers, only `model_service_url` and the adapter's field
+    # mapping change, never the call sites. Default "mock" so tests / CI never
+    # touch the network.
+    model_source: str = "mock"  # mock | http
+    model_service_url: str = ""  # e.g. https://icefeather-aifinalproject.hf.space
+    model_service_timeout_s: float = 3.0
+    model_cache_ttl_s: float = 5.0
+
     @property
     def is_prod(self) -> bool:
         return self.app_env.lower() == "prod"
+
+    @property
+    def model_enabled(self) -> bool:
+        return self.model_source == "http" and bool(self.model_service_url)
 
 
 @lru_cache

@@ -668,3 +668,15 @@ emits a best-effort `system:connection` event on `ai_servo:system`
 (design-frontend §9.3 gap-fill). `version_consistency.verified` + `components`
 {api, dispatcher, schema} map to the admin "服務版本一致 VERIFIED" badge. Gated on
 `system.settings` (admin — it is the admin integrations screen, §7.5).
+
+---
+
+## Batch 8 — 外部模型服務 (external model service)
+
+### D8.1 模型以 HTTP 呼叫外部服務，不在後端本機推論
+
+模型由另一團隊交付且之後會替換。把 `.joblib` + scikit-learn 綁進後端會讓交付日變成依賴樹遷移。
+改以 HTTP adapter（`app/repositories/http/model_service.py`）隔離，換模型只需改 `MODEL_SERVICE_URL`
+與 `_to_prediction` 的欄位對映。代價是 ~0.9s RTT 與外部可用性風險，以 TTL 快取 + 無條件 fallback
+到 `domain/timeseries` 承擔。特徵來源另立接縫（`app/domain/servo_features.py`），由資料組替換。
+`MODEL_SOURCE` 預設 `mock` → `model_enabled` 為 False → 既有測試與 CI 不發任何網路請求。

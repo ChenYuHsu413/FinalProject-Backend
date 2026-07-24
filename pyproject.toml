@@ -19,6 +19,8 @@ dependencies = [
     "alembic>=1.13,<2.0",
     "redis>=5.0,<6.0",
     "arq>=0.26,<1.0",
+    # Batch 8: outbound calls to the external model service.
+    "httpx>=0.27,<1.0",
 ]
 
 [project.optional-dependencies]
