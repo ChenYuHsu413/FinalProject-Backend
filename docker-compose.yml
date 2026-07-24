@@ -7,6 +7,13 @@
 #
 # Per PROMPT §6: only the reverse proxy is meant to publish ports in prod.
 # For local dev we bind api to 127.0.0.1 only; postgres/redis stay internal.
+#
+# State lives in BIND MOUNTS under $DATA_ROOT, not docker named volumes. On the
+# GCP VM, DATA_ROOT=/srv/data — the separate 20GB persistent disk that the daily
+# snapshot schedule covers (PROMPT §6). Named volumes would sit under
+# /var/lib/docker on the *boot* disk instead, which snapshots never touch, so a
+# rebuilt VM would come back with an empty data disk and no database. The
+# default keeps local dev self-contained in ./.data (gitignored).
 services:
   api:
     build: .
@@ -17,7 +24,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - engine_data:/srv/data/engine
+      - ${DATA_ROOT:-./.data}/engine:/srv/data/engine
     depends_on:
       postgres:
         condition: service_healthy
@@ -37,7 +44,7 @@ services:
     env_file:
       - .env
     volumes:
-      - engine_data:/srv/data/engine
+      - ${DATA_ROOT:-./.data}/engine:/srv/data/engine
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,7 +59,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       POSTGRES_DB: ${POSTGRES_DB:-aiservo}
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - ${DATA_ROOT:-./.data}/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aiservo}"]
       interval: 10s
@@ -68,7 +75,3 @@ services:
       timeout: 3s
       retries: 5
     restart: unless-stopped
-
-volumes:
-  pg_data:
-  engine_data:

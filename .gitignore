@@ -28,3 +28,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# docker compose bind-mount root for local dev (DATA_ROOT default)
+.data/

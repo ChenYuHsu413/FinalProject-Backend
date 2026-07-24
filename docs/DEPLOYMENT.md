@@ -27,28 +27,24 @@ caddy (80/443 對外)  →  flask (前端)
 也就是說：**照現在的 compose 部署上去，等於沒有反向代理、沒有 HTTPS、前端不在機器上。**
 上線前必須先補 §9 的項目。本文其餘章節假設你已補上，並在該用到的地方標註。
 
-### ⚠ 資料根本不在資料碟上
+### 資料落點：`DATA_ROOT` bind mount
 
 PROMPT §6 要求「額外 Persistent Disk 20GB 掛 `/srv/data`，Postgres volume 與
-`ENGINE_DATA_DIR` 都放這裡」。**現況沒有做到。** 現在的 compose 用的是 docker
-**具名 volume**：
+`ENGINE_DATA_DIR` 都放這裡」。compose 以 **bind mount** 達成：
 
 ```yaml
-volumes:
-  - engine_data:/srv/data/engine       # 具名 volume，不是 bind mount
-  - pg_data:/var/lib/postgresql/data   # 同上
+- ${DATA_ROOT:-./.data}/engine:/srv/data/engine
+- ${DATA_ROOT:-./.data}/postgres:/var/lib/postgresql/data
 ```
 
-具名 volume 實際存放在 `/var/lib/docker/volumes/`，位於**開機碟**。後果：
+**VM 上務必在 `.env` 設 `DATA_ROOT=/srv/data`**，資料才會落在有快照的那顆磁碟上。
+本機開發不設即可，預設寫進倉庫下的 `./.data`（已 gitignore）。
 
-| 你以為 | 實際 |
-|---|---|
-| 資料碟快照 = 資料備份 | 快照的是一顆**空盤**，救不回任何東西 |
-| 打包 `/srv/data` 就能搬家 | 打包到的是空目錄 |
-| VM 重建、資料碟不動 = 資料還在 | **資料隨開機碟一起消失** |
-
-**在 §9 第 8 項修好之前，唯一有效的備份是 §7.1 的 `pg_dump` 加 §7.4 的 volume 匯出。**
-不要依賴磁碟快照。
+> **為什麼不用 docker 具名 volume**：具名 volume 實際存放在
+> `/var/lib/docker/volumes/`，位於**開機碟**。那樣的話資料碟永遠是空的，每日快照
+> 快照到的是一顆空盤，VM 重建後資料庫整個消失——而且備份看起來一路正常，直到你
+> 真的需要它。冒號右邊的 `/srv/data/engine` 是**容器內**路徑，兩種寫法在容器裡
+> 完全一樣，所以這個差異從程式或 log 看不出來。
 
 ---
 
@@ -195,7 +191,7 @@ git clone https://github.com/ChenYuHsu413/FinalProject-Backend.git ~/backend
 cd ~/backend
 ```
 
-前端是**另一個 repo**，需一併 clone（見 §9 第 9 項——它目前沒有 Dockerfile）：
+前端是**另一個 repo**，需一併 clone（見 §9 第 8 項——它目前沒有 Dockerfile）：
 
 ```bash
 git clone https://github.com/yuwen628/AI-Servo-Command-Center.git ~/frontend
@@ -370,8 +366,7 @@ ls -1t /srv/data/backups/aiservo-*.sql.gz | tail -n +8 | xargs -r rm
 
 ### 7.2 從快照重建（VM 整台掛掉）
 
-> **先讀 §0 的警告。** 在 volume 改成 bind mount 之前，資料碟快照裡**沒有資料**，
-> 這節只能重建機器，資料要靠 §7.1 / §7.4 的備份還原。
+資料在 `DATA_ROOT` bind mount 上（§0），所以資料碟快照確實含有資料庫與 engine 檔案。
 
 ```bash
 # 1. 從快照建新盤
@@ -381,40 +376,37 @@ gcloud compute disks create ${DATA_DISK}-restored \
 
 # 2. 重新建 VM（§2.3），--disk 換成 ${DATA_DISK}-restored
 
-# 3. 主機初始化（§3）—— 【務必跳過 mkfs】
+# 3. 主機初始化（§3）—— 【務必跳過 mkfs】，資料就在盤上
 
-# 4. 重新部署（§4）—— .env 需重建，SERVICE_TOKEN 要與前端同步更新
+# 4. 重新部署（§4）—— .env 需重建，且務必再次設定：
+#      DATA_ROOT=/srv/data
+#      SERVICE_TOKEN 要與前端同步更新
 
-# 5. 還原資料：§7.3 的 pg_dump 還原 + §7.4 的 engine volume 還原
+# 5. docker compose up -d —— Postgres 直接接上還原的資料目錄，不需 pg_dump 還原
 
 # 6. 跑完 §5 驗證清單，特別是 5.3 稽核鏈
 ```
 
 **復原後稽核鏈仍須 `verified: true`。** 若否，代表還原的資料不完整。
 
-### 7.3 還原資料庫
+> 快照是檔案系統層級的複製，對執行中的 Postgres 而言等同「當機後重啟」。
+> Postgres 的 WAL 可以處理，但**每日 `pg_dump`（§7.1）仍不可省略**——快照救得了
+> 機器，救不了「誤刪一張表」這種邏輯錯誤。
+
+### 7.3 還原資料庫（從 `pg_dump`）
 
 ```bash
 gunzip -c /srv/data/backups/aiservo-<date>.sql.gz \
   | docker compose exec -T postgres psql -U aiservo aiservo
 ```
 
-### 7.4 備份／還原 engine volume
+### 7.4 備份 engine 檔案
 
-具名 volume 無法用檔案系統備份取得，得用容器導出：
+bind mount 之後就是普通目錄，直接打包即可：
 
 ```bash
-# 備份
-docker run --rm -v backend_engine_data:/data -v /srv/data/backups:/backup \
-  alpine tar czf /backup/engine-$(date +%F).tar.gz -C /data .
-
-# 還原
-docker run --rm -v backend_engine_data:/data -v /srv/data/backups:/backup \
-  alpine sh -c "rm -rf /data/* && tar xzf /backup/engine-<date>.tar.gz -C /data"
+sudo tar czf /srv/data/backups/engine-$(date +%F).tar.gz -C /srv/data engine
 ```
-
-> volume 名稱前綴是 compose 專案名（預設為目錄名，此處為 `backend`）。
-> 用 `docker volume ls` 確認實際名稱。
 
 ---
 
@@ -422,24 +414,19 @@ docker run --rm -v backend_engine_data:/data -v /srv/data/backups:/backup \
 
 整套設計就是為了可以整包搬走——compose + 一顆資料磁碟。
 
-1. **停服務**：`docker compose down`（**不要加 `-v`**，那會連 volume 一起刪掉，資料全毀）
-2. **備份三樣東西**（缺一不可）：
+1. **停服務**：`docker compose down`
+2. **備份**：先做一份邏輯備份，再整包打包 `/srv/data`
    ```bash
-   # a. 資料庫
+   docker compose up -d postgres                    # 只起 DB 來 dump
    docker compose exec -T postgres pg_dump -U aiservo aiservo \
      | gzip > /srv/data/backups/aiservo-final.sql.gz
-   # b. engine volume（§7.4）
-   docker run --rm -v backend_engine_data:/data -v /srv/data/backups:/backup \
-     alpine tar czf /backup/engine-final.tar.gz -C /data .
-   # c. .env（含 SERVICE_TOKEN / DB 密碼，不在 repo 裡）
-   cp .env /srv/data/backups/env.bak
-   # 打包
-   sudo tar czf ~/migration-$(date +%F).tar.gz -C /srv/data backups
+   docker compose down
+   cp .env /srv/data/backups/env.bak                # 含 SERVICE_TOKEN / DB 密碼
+   sudo tar czf ~/srv-data-$(date +%F).tar.gz -C /srv data
    ```
-3. **取出**：`gcloud compute scp --tunnel-through-iap $VM:~/migration-*.tar.gz . --zone=$ZONE`
-4. **落地新環境**：新主機裝 Docker → clone repo → 還原 `.env`
-   → `docker compose up -d postgres redis` → `alembic upgrade head`
-   → 還原資料庫（§7.3）與 engine volume（§7.4）→ `docker compose up -d`
+3. **取出**：`gcloud compute scp --tunnel-through-iap $VM:~/srv-data-*.tar.gz . --zone=$ZONE`
+4. **落地新環境**：新主機裝 Docker → 解開成 `/srv/data` → clone repo → 還原 `.env`
+   （確認 `DATA_ROOT=/srv/data`）→ `docker compose up -d` → `alembic upgrade head`
 5. **驗證**：完整跑一次 §5
 6. **拆除**：確認新環境無誤後才刪 GCP 資源
    ```bash
@@ -447,9 +434,10 @@ docker run --rm -v backend_engine_data:/data -v /srv/data/backups:/backup \
    gcloud compute disks delete $DATA_DISK --zone=$ZONE
    ```
 
-> **最容易漏的一點**：資料庫與 engine 檔案都在 docker 具名 volume 裡（§0），
-> 打包 `/srv/data` 抓不到它們。遷移前務必確認 `aiservo-final.sql.gz` 與
-> `engine-final.tar.gz` 都存在、大小合理、能解開——在刪掉舊 VM 之前。
+> **兩個容易出事的點**：
+> 1. `docker compose down` **不要加 `-v`**。
+> 2. 打包前務必 `docker compose down`——複製執行中的 Postgres 資料目錄會得到
+>    不一致的檔案。這也是為什麼步驟 2 仍保留一份 `pg_dump`：那份無論如何都可還原。
 
 ---
 
@@ -467,24 +455,13 @@ PROMPT §6 要求的 7 項交付物，目前狀態：
 | 6 | Secrets 產生 | 部分 — §4.2 有指令，未腳本化 |
 | 7 | `docs/DEPLOYMENT.md` | **本文件** |
 
-另外三個阻擋上線的問題：
+另外兩個阻擋上線的問題：
 
 | # | 問題 | 影響 |
 |---|---|---|
-| 8 | **volume 沒放在資料碟上**（§0） | 磁碟快照備份完全無效，災難復原會失敗 |
-| 9 | **前端沒有 Dockerfile** | [AI-Servo-Command-Center](https://github.com/yuwen628/AI-Servo-Command-Center) 目前只有 `run.py`（Flask，預設埠 5000／`AI_SERVO_PORT`），無法進 compose |
-| 10 | **api 仍 publish 到 `127.0.0.1:8000`** | 正式環境應只有 caddy publish 80/443，api 不 publish（PROMPT §6 明確要求） |
+| 8 | **前端沒有 Dockerfile** | [AI-Servo-Command-Center](https://github.com/yuwen628/AI-Servo-Command-Center) 目前只有 `run.py`（Flask，預設埠 5000／`AI_SERVO_PORT`），無法進 compose |
+| 9 | **api 仍 publish 到 `127.0.0.1:8000`** | 正式環境應只有 caddy publish 80/443，api 不 publish（PROMPT §6 明確要求） |
 
-第 8 項的修法是把 compose 的具名 volume 改成 bind mount：
-
-```yaml
-  postgres:
-    volumes:
-      - /srv/data/postgres:/var/lib/postgresql/data
-  api:
-    volumes:
-      - /srv/data/engine:/srv/data/engine
-```
-
-改完後資料才真的落在快照涵蓋的磁碟上，§7.2 的復原流程也才成立。
-**這個改動要在有正式資料之前做**，否則需要一次資料搬遷。
+> 先前列在這裡的「資料不在資料碟上」已修正：compose 改用 `DATA_ROOT` bind mount
+> （§0）。**但仍需在 VM 的 `.env` 設 `DATA_ROOT=/srv/data`**——沒設的話資料會
+> 落在倉庫目錄下的 `./.data`，一樣不受快照保護。
