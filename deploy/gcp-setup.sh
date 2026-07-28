@@ -91,9 +91,8 @@ fi
 
 say "檢查有沒有可疑的對外規則（5432 / 6379 / 8000 / 5000 / 22 對全世界）"
 BAD=$(gcloud compute firewall-rules list \
-  --filter="direction=INGRESS AND sourceRanges:0.0.0.0/0" \
-  --format="value(name,allowed[].map().firewall_rule().list())" \
-  | grep -E ':(5432|6379|8000|5000)|tcp:22' || true)
+  --format="value(name,sourceRanges.list(),allowed[].map().firewall_rule().list())" \
+  | grep '0.0.0.0/0' | grep -E 'tcp:(22|5432|6379|8000|5000)' || true)
 if [ -n "$BAD" ]; then
   echo "⚠️  發現下列規則把內部服務或 SSH 開給全世界，請手動確認並刪除："
   echo "$BAD"
