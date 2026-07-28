@@ -1,0 +1,34 @@
+# deploy/Caddyfile — 門口設定
+#
+# 這台只跑後端 API。前端在另一台 VM（35.194.234.205），透過這裡呼叫後端。
+#
+# DOMAIN 沒設 → 監聽 :80（前端用 http://<後端IP>/api/v1 呼叫）
+# DOMAIN 有設 → caddy 自動申請 Let's Encrypt 憑證，前端改用 https://網域/api/v1
+
+{$DOMAIN::80} {
+	# 只轉 API 路徑，其他一律 404 —— 這台沒有網頁可看
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	# 不用帶 token 的公開健康檢查（給人工確認、監控用）
+	handle /caddy-health {
+		respond "ok" 200
+	}
+
+	handle {
+		respond 404
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		-Server
+	}
+
+	encode gzip
+
+	log {
+		output stdout
+		format console
+	}
+}

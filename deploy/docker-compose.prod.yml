@@ -1,0 +1,98 @@
+# deploy/docker-compose.prod.yml — 正式環境（GCP VM，只跑後端）
+#
+# 用法（在 ~/backend 底下）：
+#   docker compose -f deploy/docker-compose.prod.yml --env-file .env up -d
+#
+# 與開發用 docker-compose.yml 的差異：
+#   1. 多了 caddy（門口），把 /api/* 代理到 api
+#   2. api 完全不 publish 埠 —— 只有 caddy 對外開 80/443
+#   3. APP_ENV=prod
+#
+# 前端「不在」這台：它已上線於另一台 GCP VM（35.194.234.205:5000），
+# 透過 http(s)://<這台的IP或網域>/api/v1 呼叫本後端。
+# 對接需要在前端那台設定：
+#   SERVICE_TOKEN     = 與本機 .env 完全相同的值
+#   BACKEND_BASE_URL  = http://<這台的對外IP>/api/v1   （有網域則用 https://網域/api/v1）
+#
+# 資料一律走 DATA_ROOT 綁定掛載（正式環境必須是 /srv/data，即資料碟）。
+
+services:
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${DATA_ROOT:?必須設定 DATA_ROOT（正式環境為 /srv/data）}/caddy/data:/data
+      - ${DATA_ROOT}/caddy/config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ..                    # = ~/backend
+    env_file:
+      - ../.env
+    environment:
+      APP_ENV: prod
+    # 注意：正式環境「不開任何埠」。對外流量一律經 caddy 走容器內部網路。
+    volumes:
+      - ${DATA_ROOT}/engine:/srv/data/engine
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/v1/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+    command: ["arq", "worker.main.WorkerSettings"]
+    env_file:
+      - ../.env
+    environment:
+      APP_ENV: prod
+    volumes:
+      - ${DATA_ROOT}/engine:/srv/data/engine
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aiservo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 未設定}
+      POSTGRES_DB: ${POSTGRES_DB:-aiservo}
+    volumes:
+      - ${DATA_ROOT}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aiservo}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
