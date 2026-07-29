@@ -12,7 +12,8 @@
       2. generates (once) a random service token under .localdev/ (gitignored),
       3. runs `alembic upgrade head` against that DB,
       4. starts `uvicorn app.main:app` in the background with SERVICE_TOKEN +
-         DATABASE_URL set, and waits for /api/v1/health,
+         DATABASE_URL + DEPLOY_MODE + ENGINE_DATA_DIR set, and waits for
+         /api/v1/health,
       5. prints the API base + token so you can drive the governance API by hand.
 
     The token, uvicorn pid and log live in .localdev/ and never enter git. The
@@ -24,6 +25,7 @@
 .EXAMPLE
     pwsh scripts/dev_stack.ps1                     # start in full mode (default)
     pwsh scripts/dev_stack.ps1 -DeployMode lite    # start with DEPLOY_MODE=lite (D1.8)
+    pwsh scripts/dev_stack.ps1 -EngineDataDir .data/engine   # override the engine dir
     pwsh scripts/dev_stack.ps1 -Stop               # stop API (and the local Postgres)
     pwsh scripts/dev_stack.ps1 -Stop -KeepDb       # stop API, leave Postgres running
 #>
@@ -33,6 +35,10 @@ param(
     [string]$Db = "aiservo_test",
     [ValidateSet("full", "lite")]
     [string]$DeployMode = "full",  # DEPLOY_MODE passed to the API (D1.8)
+    # Engine data dir the API reads (L1/L2/L3/snapshot + the executor's
+    # param_verify/ reports). Defaults to the repo's local mock dataset so the API
+    # and the bypass executor share one dir out of the box. Relative → repo root.
+    [string]$EngineDataDir = "enginedata.local",
     [switch]$Stop,
     [switch]$KeepDb             # with -Stop: leave the local Postgres up
 )
@@ -47,6 +53,7 @@ $pidFile    = Join-Path $devDir "uvicorn.pid"
 $logFile    = Join-Path $devDir "uvicorn.log"
 $apiBase    = "http://127.0.0.1:$Port/api/v1"
 $databaseUrl = "postgresql+asyncpg://postgres@localhost:$PgPort/$Db"
+$engineDir  = if ([System.IO.Path]::IsPathRooted($EngineDataDir)) { $EngineDataDir } else { Join-Path $root $EngineDataDir }
 
 function Stop-Api {
     if (Test-Path $pidFile) {
@@ -99,6 +106,7 @@ $env:SERVICE_TOKEN = $tok
 $env:APP_ENV       = "dev"
 $env:MOCK_MODE     = "true"
 $env:DEPLOY_MODE   = $DeployMode
+$env:ENGINE_DATA_DIR = $engineDir
 
 # 3. Migrate.
 Write-Host "==> alembic upgrade head ..."
@@ -126,6 +134,7 @@ if ($up) {
     Write-Host "  API base     : $apiBase"
     Write-Host "  DATABASE_URL : $databaseUrl"
     Write-Host "  DEPLOY_MODE  : $DeployMode"
+    Write-Host "  ENGINE_DATA_DIR: $engineDir"
     Write-Host "  Service token: (in $tokenFile)"
     Write-Host ""
     Write-Host "Drive it, e.g.:"
@@ -133,6 +142,9 @@ if ($up) {
     Write-Host '  $tok = Get-Content "' + $tokenFile + '" -Raw'
     Write-Host '  $h = @{ Authorization="Bearer $tok"; "X-User-ID"="svc-test"; "X-User-Role"="engineer"; "X-Correlation-ID"=[guid]::NewGuid().ToString() }'
     Write-Host '  (Invoke-RestMethod "$env:API/alarms" -Headers $h).alarms   # note: key is .alarms, not .items'
+    Write-Host ""
+    Write-Host "Run the executor against the SAME engine dir so its reports show up:"
+    Write-Host ('  $env:BACKEND_API="' + $apiBase + '"; $env:SERVICE_TOKEN="@' + $tokenFile + '"; $env:ENGINE_DATA_DIR="' + $engineDir + '"; python executor/run_executor.py')
     Write-Host ""
     Write-Host "Stop with: pwsh scripts/dev_stack.ps1 -Stop"
 } else {
