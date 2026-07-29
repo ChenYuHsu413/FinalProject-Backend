@@ -534,6 +534,105 @@ async def test_full_governance_loop_train_to_model_changed(sm, fake_redis, engin
     await deploy.unsubscribe(channels.L3_DEPLOY)
 
 
+# --- DEPLOY_MODE=lite: engineer approval topology (D1.8) ---------------------
+# The permission-table unit coverage is in test_deploy_mode_perms.py; these are
+# the behavioural HTTP-flow checks that need a real approve path + DB.
+async def test_lite_engineer_can_read_and_approve_param_tuning(deploy_mode_lite, sm, iclient):
+    # Service identity proposes (svc-diagnosis), a human engineer approves — the
+    # separation-of-duty story lite relies on (D1.8). Different user_id, so 同人禁核
+    # is satisfied and lite's engineer approve code lets the decision through.
+    body = {
+        "type": "param_tuning",
+        "device": "AXIS-04",
+        "scenario_id": SCENARIO,
+        "summary": {"param": "Kp", "new": 12.75, "delta_pct": 2.8, "allowed_range": [10, 14]},
+    }
+    r = await iclient.post(
+        "/api/v1/approvals", headers=_headers("engineer", "svc-diagnosis"), json=body
+    )
+    assert r.status_code == 201, r.text
+    aid = r.json()["approval_id"]
+
+    # Engineer can now READ the approvals list in lite (approval.read granted).
+    rl = await iclient.get("/api/v1/approvals", headers=_headers("engineer", "eng-1"))
+    assert rl.status_code == 200, rl.text
+
+    # Engineer can APPROVE param_tuning in lite → decision + side effect applied.
+    ra = await iclient.post(
+        f"/api/v1/approvals/{aid}/approve",
+        headers=_headers("engineer", "eng-1"),
+        json={"note": "lite approve"},
+    )
+    assert ra.status_code == 200, ra.text
+    assert ra.json()["state"] == "approved"
+    assert ra.json()["side_effect_status"] == "applied"
+
+
+async def test_lite_engineer_self_approval_still_forbidden(deploy_mode_lite, sm, iclient):
+    # (c) Even in lite — where engineer holds the approve code — an engineer may
+    # NOT approve their own proposal: 同人禁核 runs before the code check.
+    body = {
+        "type": "param_tuning",
+        "device": "AXIS-04",
+        "scenario_id": SCENARIO,
+        "summary": {"param": "Kp", "new": 12.75, "delta_pct": 2.8, "allowed_range": [10, 14]},
+    }
+    r = await iclient.post("/api/v1/approvals", headers=_headers("engineer", "eng-1"), json=body)
+    aid = r.json()["approval_id"]
+
+    r2 = await iclient.post(
+        f"/api/v1/approvals/{aid}/approve",
+        headers=_headers("engineer", "eng-1"),  # same user_id as proposer
+        json={"note": "self"},
+    )
+    assert r2.status_code == 403
+    assert "same-person" in r2.json()["error"]["message"]
+
+
+async def test_lite_engineer_cannot_approve_scenario_activation(deploy_mode_lite, sm, iclient):
+    # (d) lite widens ONLY model_promotion / param_tuning. scenario_activation
+    # approval stays admin-only: engineer lacks the per-type approve code, so the
+    # service depth check 403s even though the router read gate now lets them in.
+    body = {"type": "scenario_activation", "scenario_id": SCENARIO, "summary": {}}
+    r = await iclient.post("/api/v1/approvals", headers=_headers("engineer", "eng-2"), json=body)
+    assert r.status_code == 201, r.text
+    aid = r.json()["approval_id"]
+
+    r2 = await iclient.post(
+        f"/api/v1/approvals/{aid}/approve",
+        headers=_headers("engineer", "eng-1"),  # different user → not self-approval
+        json={"note": "try"},
+    )
+    assert r2.status_code == 403
+    assert r2.json()["error"]["details"]["required"] == "scenario.activate.approve"
+
+
+async def test_full_engineer_cannot_approve_the_two_types(deploy_mode_full, sm, iclient):
+    # (a) behavioural: in full mode engineer is blocked at the router read gate
+    # (approval.read is admin-only), so approve/read of these types 403.
+    body = {
+        "type": "param_tuning",
+        "device": "AXIS-04",
+        "scenario_id": SCENARIO,
+        "summary": {"param": "Kp", "new": 12.75, "delta_pct": 2.8, "allowed_range": [10, 14]},
+    }
+    r = await iclient.post(
+        "/api/v1/approvals", headers=_headers("engineer", "svc-diagnosis"), json=body
+    )
+    aid = r.json()["approval_id"]
+
+    # Read denied in full.
+    rl = await iclient.get("/api/v1/approvals", headers=_headers("engineer", "eng-1"))
+    assert rl.status_code == 403
+    # Approve denied in full.
+    ra = await iclient.post(
+        f"/api/v1/approvals/{aid}/approve",
+        headers=_headers("engineer", "eng-1"),
+        json={"note": "nope"},
+    )
+    assert ra.status_code == 403
+
+
 # --- training job REST + cancel + shadow comparisons -------------------------
 async def test_training_job_rest_and_cancel(sm, iclient):
     r = await iclient.post(

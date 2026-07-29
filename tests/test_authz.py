@@ -34,9 +34,12 @@ async def test_operator_owns_console_actions(client, auth_headers):
     assert {"cycle.start", "cycle.stop", "safety.stop_request", "alarm.ack"} <= operator
 
 
-async def test_approval_codes_are_split_propose_vs_approve(client, auth_headers):
+async def test_approval_codes_are_split_propose_vs_approve(client, auth_headers, deploy_mode_full):
     # D1.5a: engineer proposes, admin approves — never the same code, so 同人禁核
-    # is enforceable at the permission layer (design-backend §6.2).
+    # is enforceable at the permission layer (design-backend §6.2). This split is
+    # the DEFAULT (full) topology; DEPLOY_MODE=lite intentionally grants engineer
+    # the model_promotion/param_tuning approve codes (D1.8), covered separately —
+    # so pin this to full mode rather than relying on ambient DEPLOY_MODE.
     resp = await client.get("/api/v1/authz/permissions", headers=auth_headers)
     roles = resp.json()["roles"]
     engineer, admin = set(roles["engineer"]), set(roles["admin"])

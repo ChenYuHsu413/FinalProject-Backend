@@ -172,6 +172,12 @@ cp .env.example .env                            # set SERVICE_TOKEN
 uvicorn app.main:app --reload
 ```
 
+Environment variables are documented in `.env.example`. Of note:
+`DEPLOY_MODE` (`full` default | `lite`) selects the permission topology — `lite`
+grants engineers approval of `model_promotion` / `param_tuning` for a single-role
+workbench, with 同人禁核 still enforced in both modes (see DECISIONS D1.8). An
+invalid value fails fast at startup.
+
 Then:
 
 ```bash

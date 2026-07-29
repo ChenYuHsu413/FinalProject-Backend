@@ -159,14 +159,55 @@ APPROVE_CODE: dict[str, str] = {
 }
 
 
+# --- Deployment topology: DEPLOY_MODE=lite widens engineer's approval rights ---
+# `full` (default) is the table above: model_promotion / param_tuning approval is
+# admin-only. `lite` supports a single-role workbench by additionally granting the
+# engineer the *approve* authority for exactly those two types (approval.read to
+# pass the router's coarse read gate, plus the per-type approve codes the service
+# checks in depth). scenario_activation approval stays admin-only in both modes,
+# and 同人禁核 (decided_by != proposed_by, approval_service._check_can_decide) is
+# unaffected — it runs before the code check, so an engineer still cannot approve
+# their own proposal in either mode. See docs/DECISIONS.md D1.8.
+#
+# The read gate (approval.read) is coarse (not per-type), so in lite an engineer
+# can also *see* scenario_activation rows in the shared list; they still cannot
+# decide them. Per-type read scoping would change the read endpoints' contract and
+# is deliberately out of scope (D1.8).
+_LITE_ENGINEER_EXTRA: frozenset[str] = frozenset(
+    {APPROVAL_READ, MODEL_PROMOTE_APPROVE, PARAM_TUNE_APPROVE}
+)
+
+_LITE_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
+    **ROLE_PERMISSIONS,
+    ENGINEER: ROLE_PERMISSIONS[ENGINEER] | _LITE_ENGINEER_EXTRA,
+}
+
+
+def _effective_permissions() -> dict[str, frozenset[str]]:
+    """Role→permissions for the active deployment topology (DEPLOY_MODE).
+
+    Resolved at call time from settings so a mode change (env + settings cache
+    clear) takes effect without an app rebuild; every caller — the router
+    ``require_permission`` gate, the service ``has_permission`` depth check, and
+    the authz sync endpoint — goes through here, so they can never disagree.
+    """
+    # Imported lazily to avoid a settings→permissions import cycle at module load.
+    from app.core.settings import get_settings
+
+    if get_settings().deploy_mode == "lite":
+        return _LITE_ROLE_PERMISSIONS
+    return ROLE_PERMISSIONS
+
+
 def has_permission(role: str, permission: str) -> bool:
-    return permission in ROLE_PERMISSIONS.get(role, frozenset())
+    return permission in _effective_permissions().get(role, frozenset())
 
 
 def permissions_for(role: str) -> list[str]:
-    return sorted(ROLE_PERMISSIONS.get(role, frozenset()))
+    return sorted(_effective_permissions().get(role, frozenset()))
 
 
 def permissions_table() -> dict[str, list[str]]:
     """Serializable role → sorted permission codes, for the authz sync endpoint."""
-    return {role: permissions_for(role) for role in sorted(ROLE_PERMISSIONS)}
+    perms = _effective_permissions()
+    return {role: sorted(perms[role]) for role in sorted(perms)}

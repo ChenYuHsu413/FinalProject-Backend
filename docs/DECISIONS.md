@@ -152,6 +152,26 @@ added to compose, decide whether it is pulled as a pre-built image from another
 repo/registry or built from a relative path (git submodule / sibling checkout).
 Record the choice here at that time.
 
+### D1.8 部署型態開關 DEPLOY_MODE (full|lite)
+
+部署型態開關 `DEPLOY_MODE`（`full`|`lite`，預設 `full`）：`lite` 將
+`model_promotion` / `param_tuning` 的核准權下放至 engineer 以支援單角色工作台；
+同人禁核於兩種模式下均維持。職責分立在 `lite` 模式由「服務身份提案
+（svc-diagnosis / svc-retrain）× 人類核准」達成。預設 `full`（現況 admin-only）。
+
+實作：權限矩陣 `ROLE_PERMISSIONS` 維持為 `full` 基準表，`lite` 由
+`_effective_permissions()` 依 `settings.deploy_mode` 於呼叫時回傳「engineer 額外
+持有 `approval.read` + `model.promote.approve` + `param.tune.approve`」的組裝表。
+對外介面（`has_permission` / `permissions_for` / `permissions_table`）與所有呼叫點
+不變，故路由 gate、service 深度檢查、authz 同步端點三者永遠一致。非法 `DEPLOY_MODE`
+於 `Settings` 建構（啟動）時即報錯（D1.8 validator）。
+
+不變量：同人禁核（`decided_by != proposed_by`）在 `_check_can_decide` 內先於
+per-type 碼檢查，故 `lite` 下 engineer 即使持有 approve 碼，仍不得自核。
+`scenario_activation` 核准兩模式皆維持 admin-only。取捨：`approval.read` 為粗粒度
+（非 per-type），`lite` 下 engineer 亦可*看見* `scenario_activation` 清單列，但不能
+決策；per-type 讀取範圍會改動讀取端點契約，刻意不納入。
+
 ---
 
 ## Batch 2 — 稽核子系統 (audit)

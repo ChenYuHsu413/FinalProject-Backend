@@ -6,6 +6,7 @@ import asyncio
 import os
 import sys
 from collections.abc import AsyncIterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -48,6 +49,38 @@ def _reset_db_engine():
     yield
     db._engine = None
     db._sessionmaker = None
+
+
+@contextmanager
+def _deploy_mode(mode: str):
+    """Set DEPLOY_MODE for the duration, rebuilding the settings cache around it.
+
+    Permission accessors read settings at call time, so toggling the env var +
+    clearing the cache flips full/lite with no app rebuild (D1.8).
+    """
+    old = os.environ.get("DEPLOY_MODE")
+    os.environ["DEPLOY_MODE"] = mode
+    get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("DEPLOY_MODE", None)
+        else:
+            os.environ["DEPLOY_MODE"] = old
+        get_settings.cache_clear()
+
+
+@pytest.fixture
+def deploy_mode_full():
+    with _deploy_mode("full"):
+        yield
+
+
+@pytest.fixture
+def deploy_mode_lite():
+    with _deploy_mode("lite"):
+        yield
 
 
 @pytest.fixture(scope="session")
