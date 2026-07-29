@@ -23,7 +23,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # --- Mock-stage policy (design-backend §13 item 6 — initial whitelist) --------
-PARAM_WHITELIST: frozenset[str] = frozenset({"Kp", "Ki", "Acc"})  # Acc: 加減速參數，健康感知降載 (recommend_v2 tier-3) 用，模擬驗證峰值電流 −22%
+PARAM_WHITELIST: frozenset[str] = frozenset(
+    {"Kp", "Ki", "Acc"}
+)  # Acc: 加減速參數，健康感知降載 (recommend_v2 tier-3) 用，模擬驗證峰值電流 −22%
 # Max allowed magnitude of change in one tuning step (變化率 check). The §6.1
 # example is delta_pct 2.8 within this bound; a jump like 25% is rejected.
 MAX_DELTA_PCT: float = 10.0
