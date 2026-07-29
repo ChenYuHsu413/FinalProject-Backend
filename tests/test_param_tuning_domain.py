@@ -77,3 +77,31 @@ def test_check_order_whitelist_before_bounds():
     # (the first failing check), proving the chain short-circuits in order.
     r = check_param_tuning(**_ok_kwargs(param="Nope", new_value=999.0))
     assert r.failed_check == WHITELIST
+
+
+def test_acc_param_passes():
+    # Acc is whitelisted for health-aware derating (recommend_v2 tier-3): a
+    # −10% step within [200, 800] on an idle device passes all five checks.
+    r = check_param_tuning(
+        param="Acc",
+        new_value=540.0,
+        allowed_range=[200.0, 800.0],
+        delta_pct=-10.0,
+        device_state="idle",
+    )
+    assert r.ok
+    assert r.failed_check is None
+
+
+def test_acc_excessive_rate_fails():
+    # Whitelisting Acc does not relax the rate-of-change cap: a −25% step is
+    # still rejected by the 變化率 check.
+    r = check_param_tuning(
+        param="Acc",
+        new_value=540.0,
+        allowed_range=[200.0, 800.0],
+        delta_pct=-25.0,
+        device_state="idle",
+    )
+    assert not r.ok
+    assert r.failed_check == RATE
