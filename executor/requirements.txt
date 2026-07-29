@@ -1,0 +1,15 @@
+# Bypass executor (digital-twin param verification) — INDEPENDENT deps.
+# Deliberately separate from the backend's pyproject.toml: the executor is a
+# side-car that talks to the backend only over HTTP, so its numeric stack must
+# not leak into the governance API's dependency tree.
+#
+# Install into any interpreter (the repo .venv works):
+#   .venv\Scripts\python.exe -m pip install -r executor/requirements.txt
+#
+# numpy    — pmsm_sim digital twin
+# requests — HTTP client to the backend API (sim_executor / param_proposal_bridge)
+# scikit-learn — l3_gate shadow-gate metrics (r2_score / mean_absolute_error);
+#                not needed by the L1 run loop, listed so the package is complete.
+numpy>=1.26
+requests>=2.31
+scikit-learn>=1.4

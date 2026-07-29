@@ -52,6 +52,29 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Bypass digital-twin executor (L1 param verification). Optional convenience:
+  # the executor's primary target is native Windows (python executor/run_executor.py);
+  # this service is NOT verified in-repo with docker. Shares the engine volume with
+  # `api` so param_verify reports land where the frontend reads them. Requires
+  # DEPLOY_MODE=lite + SERVICE_TOKEN in .env (executor reads /approvals as engineer).
+  executor:
+    image: python:3.12-slim
+    working_dir: /executor
+    command: ["sh", "-c", "pip install --no-cache-dir -r requirements.txt && python run_executor.py"]
+    env_file:
+      - .env
+    environment:
+      BACKEND_API: http://api:8000/api/v1
+      ENGINE_DATA_DIR: /srv/data/engine
+      EXECUTOR_INTERVAL_S: "30"
+    volumes:
+      - ./executor:/executor:ro
+      - ${DATA_ROOT:-./.data}/engine:/srv/data/engine
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
   postgres:
     image: postgres:16
     environment:
