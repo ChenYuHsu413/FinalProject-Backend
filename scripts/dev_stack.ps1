@@ -22,14 +22,17 @@
     uvicorn. Tear everything down with -Stop.
 
 .EXAMPLE
-    pwsh scripts/dev_stack.ps1            # start pg + migrate + start API
-    pwsh scripts/dev_stack.ps1 -Stop      # stop API (and the local Postgres)
-    pwsh scripts/dev_stack.ps1 -Stop -KeepDb   # stop API, leave Postgres running
+    pwsh scripts/dev_stack.ps1                     # start in full mode (default)
+    pwsh scripts/dev_stack.ps1 -DeployMode lite    # start with DEPLOY_MODE=lite (D1.8)
+    pwsh scripts/dev_stack.ps1 -Stop               # stop API (and the local Postgres)
+    pwsh scripts/dev_stack.ps1 -Stop -KeepDb       # stop API, leave Postgres running
 #>
 param(
     [int]$Port = 8000,          # API port
     [int]$PgPort = 15432,       # must match scripts/local_pg.ps1 default
     [string]$Db = "aiservo_test",
+    [ValidateSet("full", "lite")]
+    [string]$DeployMode = "full",  # DEPLOY_MODE passed to the API (D1.8)
     [switch]$Stop,
     [switch]$KeepDb             # with -Stop: leave the local Postgres up
 )
@@ -88,10 +91,14 @@ if (-not (Test-Path $tokenFile)) {
 }
 
 # Environment for both alembic and uvicorn (this process + the child).
+# Start-Process inherits this process's environment, so setting $env:* here is what
+# actually carries DEPLOY_MODE into the background uvicorn (the wire the test client
+# never exercises).
 $env:DATABASE_URL  = $databaseUrl
 $env:SERVICE_TOKEN = $tok
 $env:APP_ENV       = "dev"
 $env:MOCK_MODE     = "true"
+$env:DEPLOY_MODE   = $DeployMode
 
 # 3. Migrate.
 Write-Host "==> alembic upgrade head ..."
@@ -118,6 +125,7 @@ if ($up) {
     Write-Host "DEV/DEMO stack up (NOT a deployment)."
     Write-Host "  API base     : $apiBase"
     Write-Host "  DATABASE_URL : $databaseUrl"
+    Write-Host "  DEPLOY_MODE  : $DeployMode"
     Write-Host "  Service token: (in $tokenFile)"
     Write-Host ""
     Write-Host "Drive it, e.g.:"
