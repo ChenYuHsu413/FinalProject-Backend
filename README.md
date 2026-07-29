@@ -119,6 +119,7 @@ and by DECISIONS D8.1 — they are different pieces of work. See
 | GET | `/api/v1/ensemble/status` | `dashboard.read` |
 | GET | `/api/v1/control-mode` | `dashboard.read` |
 | GET | `/api/v1/data-lifecycle` | `dashboard.read` |
+| GET | `/api/v1/engine/param-verify`, `/engine/param-verify/{report_id}` | `model.read` |
 | GET | `/api/v1/ui/snapshot` | `dashboard.read` |
 | GET | `/api/v1/trends` | `trend.read` |
 | GET | `/api/v1/alarms`, `/alarms/{id}` | `alarm.read` |

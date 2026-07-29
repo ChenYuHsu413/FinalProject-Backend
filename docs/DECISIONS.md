@@ -385,6 +385,37 @@ request — reads included — not only mutations. A read without a valid role �
 This is intentional: per-role read gating + a caller identity for auditing on
 every call. (Confirmed per batch-3 review; complements D3.5.)
 
+### D3.7 param_verify read endpoints — the engine layer reads executor output (B3)
+
+The bypass executor (`executor/`, a digital-twin side-car) writes one JSON report
+per applied `param_tuning` approval to `ENGINE_DATA_DIR/param_verify/`. B3 exposes
+them read-only for the frontend tuning page via two engine-layer endpoints
+reusing `EngineFileRepository` + `get_engine_repo` + `require_permission(model.read)`:
+
+- `GET /api/v1/engine/param-verify?device=&limit=` → `{param_verify: [...], total, limit}`
+  (resource-named page key per D1.2a). Newest-first by file mtime; `created_at` is
+  the mtime as ISO-8601. Each item is a **curated summary** (report_id, device,
+  approval_id, created_at + param/outcome/old/new/before/after/peak_current_delta_pct,
+  all report-derived fields optional so a `skipped_stale` report — which lacks
+  before/after/peak — still validates).
+- `GET /api/v1/engine/param-verify/{report_id}` → the **raw report JSON passed
+  through**, wrapped with `{report_id, device, approval_id, created_at, report}`.
+
+Decisions specific to this surface:
+
+1. **Path is `/engine/param-verify`** — deliberately carries the `engine/` segment
+   the sibling engine routes (`/l1/*`, `/l3/*`) omit, namespacing this new
+   executor-facing read surface as the prompt specified.
+2. **Empty is honest.** A missing `param_verify/` directory → `{param_verify: [], total: 0}`,
+   **not** a 404 — no verification having happened is a real zero-length result, not
+   a missing resource (contrast D3.2, which is about a *named* file being absent).
+3. **report_id path guard.** `report_id` must match `^[A-Za-z0-9_\-]+$`; anything
+   else (traversal, dots) → `EngineDataNotFound` → 404, mirroring D3.1's
+   validate-before-path-assembly rule. Files read `encoding="utf-8"` (Windows
+   cp950 trap). Internal state files (`_executed.json`, any `_`-prefixed name) are
+   skipped by the listing.
+4. **Read-only, audit-free**, like every other engine read (no hash-chain write).
+
 ---
 
 ## Batch 4 — Snapshot + trends

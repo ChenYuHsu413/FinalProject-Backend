@@ -215,3 +215,35 @@ class DataLifecycle(BaseModel):
     current_usage: dict[str, Any]
     next_cleanup_at: str
     sampling_config: dict[str, Any]
+
+
+# --- B3 param_verify (executor digital-twin reports) -------------------------
+class ParamVerifyItem(BaseModel):
+    # report_id + created_at are filesystem-derived (always present); the rest are
+    # copied from the report JSON and vary by outcome (skipped_stale has no
+    # before/after/peak), so they are optional to keep the list validation robust.
+    report_id: str
+    created_at: str
+    device: str | None = None
+    approval_id: str | None = None
+    param: str | None = None
+    outcome: str | None = None
+    old: float | None = None
+    new: float | None = None
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+    peak_current_delta_pct: float | None = None
+
+
+class ParamVerifyPage(BaseModel):
+    param_verify: list[ParamVerifyItem]  # resource-named page key (DECISIONS D1.2a)
+    total: int
+    limit: int
+
+
+class ParamVerifyReport(BaseModel):
+    report_id: str
+    created_at: str
+    device: str | None = None
+    approval_id: str | None = None
+    report: dict[str, Any]  # raw report JSON, passed through untouched

@@ -34,6 +34,7 @@ from app.routers.engine import (
     l1,
     l2,
     l3,
+    param_verify,
     residual,
     scenario_library,
     scenarios,
@@ -65,6 +66,7 @@ _ENGINE_ROUTERS = (
     ensemble.router,
     control_mode.router,
     data_lifecycle.router,
+    param_verify.router,
 )
 
 
