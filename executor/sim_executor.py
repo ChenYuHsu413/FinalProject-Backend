@@ -117,7 +117,10 @@ class ExecutorLoop:
         for a in r.json()["approvals"]:
             if a["approval_id"] in self.done:
                 continue
-            if a.get("side_effect_status") != "applied":     # 未過五重檢查者不執行
+            sfx = a.get("side_effect_status")
+            if sfx is None:                                  # 已核准、套用尚未落定(D7.3 短窗)→ 不進去重集,下輪重試
+                continue
+            if sfx != "applied":                             # 終態且非 applied(failed / apply_failed …)→ 排除法略過並去重
                 self.done.add(a["approval_id"]); continue
             s = a["summary"] or {}
             dv = (dv_estimates or {}).get(a["device"], 0.0)

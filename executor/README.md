@@ -121,16 +121,21 @@ Invoke-RestMethod "$env:BACKEND_API/approvals/$($p.approval_id)/approve" -Method
   `param_verify/_executed.json` 改為 `[]`(清除去重集)。
 - **回滾**:套參後追隨誤差較套參前劣化 > 5% ⇒ 自動回滾參數,`outcome=rolled_back`。
 
-### 已知限制(不在本次修改範圍)
+### D7.3 套用短窗的重試(已修正)
 
 後端的核准是「決策 ≠ 套用」(DECISIONS D7.3):`approve` 會**先** commit
 `state=approved`,**再**於後續 commit 設 `side_effect_status=applied`,兩者之間有一
-個短窗(含一次事件發布)。`sim_executor.py` 現行邏輯把「已核准但 `side_effect_status`
+個短窗(含一次事件發布)。舊版 `poll_once` 把「已核准但 `side_effect_status`
 尚非 `applied`」與「五重檢查失敗(terminal)」一視同仁地放進去重集永久略過——若某次
-輪詢**剛好**落在該短窗,該提案會被永久 blackhole。正常運作(輪詢間隔 30s、核准早已
-落定)幾乎不會踩到;但這是既有邏輯的一個 latent bug。因本次要求不得改動既有類別
-邏輯,未於此修正。**建議修法**:僅當 `side_effect_status == "failed"`(terminal)時
-才加入去重集;為 `None`(尚未套用)時本輪略過、下輪重試。
+輪詢**剛好**落在該短窗,該提案會被永久 blackhole(曾於 dev 實測踩到:一筆最終
+`approved/applied` 的核准只進了 `_executed.json`、無驗證報告)。
+
+**已修正於** commit `fix(executor): retry approvals caught in D7.3 apply window instead of blackholing`。
+現以**排除法**判定終態:`side_effect_status` 為 `None`(尚未套用)時本輪不進去重集、
+下輪重試;僅當其為**非 `None` 且非 `applied`** 的終態字串(`failed` / `apply_failed`
+…)時才加入去重集永久略過。不對後端終態字串集合做窄假設。回歸測試見
+`executor/test_sim_executor.py`(`test_apply_window_none_retries_not_blackholed`)。
+staleness 與回滾邏輯未動。
 
 ## (可選)docker compose
 
