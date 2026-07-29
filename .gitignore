@@ -24,6 +24,10 @@ htmlcov/
 # Local portable Postgres (binaries + data dir) created by scripts/local_pg.ps1
 .localpg/
 
+# Dev/demo stack runtime files (service token, uvicorn pid/log) created by
+# scripts/dev_stack.ps1 — NEVER commit the token.
+.localdev/
+
 # OS / editor
 .DS_Store
 .idea/

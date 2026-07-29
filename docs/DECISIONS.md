@@ -27,6 +27,17 @@ bad/missing **service token** maps to `FORBIDDEN` (403), since the enum has no
 401 member and the request is from an untrusted source, not an unauthenticated
 user (users authenticate at Flask, not here).
 
+### D1.2a List pagination envelope — resource-named array, no generic `items`
+
+Every paginated list endpoint returns `{ <resource>: [...], total, page, page_size }`
+where the array key is **named after the resource**, not a generic `items`:
+`alarms` (`GET /alarms`), `approvals`, `commands`, `reports`
+(`GET /maintenance-reports`), `jobs` and `comparisons` (training), `events`
+(audit). There is no `items` key anywhere. Clients/scripts must read `body.alarms`,
+`body.approvals`, … — reading `body.items` silently yields nothing. (Noted after a
+live B1 verification read the wrong key.) Unifying these behind one wrapper is a
+possible future refactor, not a current guarantee.
+
 ### D1.3 Where the trust boundary is enforced
 
 Service-token + `X-User-*` validation is ASGI middleware (`TrustBoundaryMiddleware`),
