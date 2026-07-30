@@ -20,13 +20,18 @@ from app.core.permissions import (
 )
 from pydantic import ValidationError
 
-# The two types lite hands to engineers, and the one it must NOT.
+# The read grant + the two approve codes an engineer ends up with in lite.
 _LITE_GRANTS = (APPROVAL_READ, MODEL_PROMOTE_APPROVE, PARAM_TUNE_APPROVE)
+# The two approve codes lite adds on top; approval.read is baseline in full (B4).
+_LITE_APPROVE_GRANTS = (MODEL_PROMOTE_APPROVE, PARAM_TUNE_APPROVE)
 
 
-# --- (a) full: engineer has no approval read/approve for the two types --------
-def test_full_engineer_denied_approve_and_read(deploy_mode_full):
-    for code in _LITE_GRANTS:
+# --- (a) full: engineer reads the approvals list but cannot approve -----------
+def test_full_engineer_reads_but_cannot_approve(deploy_mode_full):
+    # B4: engineer holds approval.read in full mode (track own proposals)...
+    assert has_permission("engineer", APPROVAL_READ)
+    # ...but the per-type approve codes stay admin-only in full → decision blocked.
+    for code in _LITE_APPROVE_GRANTS:
         assert not has_permission("engineer", code), code
     # Proposer side is unchanged — engineer still proposes in full.
     assert has_permission("engineer", MODEL_PROMOTE_PROPOSE)

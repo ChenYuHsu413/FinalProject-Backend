@@ -607,9 +607,10 @@ async def test_lite_engineer_cannot_approve_scenario_activation(deploy_mode_lite
     assert r2.json()["error"]["details"]["required"] == "scenario.activate.approve"
 
 
-async def test_full_engineer_cannot_approve_the_two_types(deploy_mode_full, sm, iclient):
-    # (a) behavioural: in full mode engineer is blocked at the router read gate
-    # (approval.read is admin-only), so approve/read of these types 403.
+async def test_full_engineer_reads_but_cannot_approve_the_two_types(deploy_mode_full, sm, iclient):
+    # (a) behavioural: B4 lets engineer READ the approvals list in full mode, but
+    # the per-type approve code stays admin-only, so the service depth check 403s
+    # the decision even though the router read gate now lets them through.
     body = {
         "type": "param_tuning",
         "device": "AXIS-04",
@@ -621,10 +622,10 @@ async def test_full_engineer_cannot_approve_the_two_types(deploy_mode_full, sm, 
     )
     aid = r.json()["approval_id"]
 
-    # Read denied in full.
+    # Read allowed in full now (B4: approval.read is a baseline engineer grant).
     rl = await iclient.get("/api/v1/approvals", headers=_headers("engineer", "eng-1"))
-    assert rl.status_code == 403
-    # Approve denied in full.
+    assert rl.status_code == 200, rl.text
+    # Approve still denied in full — engineer lacks the per-type approve code.
     ra = await iclient.post(
         f"/api/v1/approvals/{aid}/approve",
         headers=_headers("engineer", "eng-1"),

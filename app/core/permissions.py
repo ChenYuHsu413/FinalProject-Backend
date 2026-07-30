@@ -118,6 +118,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             MODEL_PROMOTE_PROPOSE,
             SCENARIO_ACTIVATE_PROPOSE,
             PARAM_TUNE_PROPOSE,
+            APPROVAL_READ,  # B4: engineer 可讀核准清單（追蹤自己的提案；決核仍 admin-only）
         }
     ),
     ADMIN: frozenset(
@@ -162,19 +163,21 @@ APPROVE_CODE: dict[str, str] = {
 # --- Deployment topology: DEPLOY_MODE=lite widens engineer's approval rights ---
 # `full` (default) is the table above: model_promotion / param_tuning approval is
 # admin-only. `lite` supports a single-role workbench by additionally granting the
-# engineer the *approve* authority for exactly those two types (approval.read to
-# pass the router's coarse read gate, plus the per-type approve codes the service
-# checks in depth). scenario_activation approval stays admin-only in both modes,
-# and 同人禁核 (decided_by != proposed_by, approval_service._check_can_decide) is
-# unaffected — it runs before the code check, so an engineer still cannot approve
-# their own proposal in either mode. See docs/DECISIONS.md D1.8.
+# engineer the *approve* authority for exactly those two types (the per-type
+# approve codes the service checks in depth). approval.read is already a baseline
+# engineer grant (B4), so lite adds only the approve codes. scenario_activation
+# approval stays admin-only in both modes, and 同人禁核 (decided_by != proposed_by,
+# approval_service._check_can_decide) is unaffected — it runs before the code
+# check, so an engineer still cannot approve their own proposal in either mode.
+# See docs/DECISIONS.md D1.8.
 #
-# The read gate (approval.read) is coarse (not per-type), so in lite an engineer
-# can also *see* scenario_activation rows in the shared list; they still cannot
-# decide them. Per-type read scoping would change the read endpoints' contract and
-# is deliberately out of scope (D1.8).
+# The read gate (approval.read) is coarse (not per-type), so an engineer can *see*
+# every approval row in the shared list (all types) — the B4 read grant is
+# list-wide, not scoped to their own proposals; they still cannot decide the types
+# they lack the approve code for. Per-type read scoping would change the read
+# endpoints' contract and is deliberately out of scope (D1.8).
 _LITE_ENGINEER_EXTRA: frozenset[str] = frozenset(
-    {APPROVAL_READ, MODEL_PROMOTE_APPROVE, PARAM_TUNE_APPROVE}
+    {MODEL_PROMOTE_APPROVE, PARAM_TUNE_APPROVE}
 )
 
 _LITE_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
