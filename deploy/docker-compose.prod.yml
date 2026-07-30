@@ -23,7 +23,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      DOMAIN: ${DOMAIN:-}
+      DOMAIN: ${DOMAIN:-:80}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ${DATA_ROOT:?必須設定 DATA_ROOT（正式環境為 /srv/data）}/caddy/data:/data

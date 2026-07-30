@@ -1,0 +1,18 @@
+# 調參驗證 executor 疊加檔：與 prod（及 frontend）compose 一起用（多重 -f）
+# 前提：後端需讓 engineer 具 approval.read（B4），否則 executor 輪詢 /approvals 會 403
+services:
+  executor:
+    build:
+      context: ..
+      dockerfile: deploy/executor.Dockerfile
+    environment:
+      BACKEND_API: http://api:8000/api/v1
+      SERVICE_TOKEN: ${SERVICE_TOKEN:?}
+      ENGINE_DATA_DIR: /srv/data/engine
+      EXECUTOR_INTERVAL_S: "30"
+    volumes:
+      - ${DATA_ROOT}/engine:/srv/data/engine
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

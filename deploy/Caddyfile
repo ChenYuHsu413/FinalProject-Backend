@@ -5,9 +5,9 @@
 # DOMAIN 沒設 → 監聽 :80（前端用 http://<後端IP>/api/v1 呼叫）
 # DOMAIN 有設 → caddy 自動申請 Let's Encrypt 憑證，前端改用 https://網域/api/v1
 
-{$DOMAIN::80} {
+{$DOMAIN} {
 	# 只轉 API 路徑，其他一律 404 —— 這台沒有網頁可看
-	handle /api/* {
+	handle /api/v1/* {
 		reverse_proxy api:8000
 	}
 
@@ -17,7 +17,7 @@
 	}
 
 	handle {
-		respond 404
+		reverse_proxy flask:5000
 	}
 
 	header {

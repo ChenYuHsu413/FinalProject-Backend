@@ -1,0 +1,21 @@
+# 前端測試副本疊加檔：與 docker-compose.prod.yml 一起用（雙 -f）
+services:
+  flask:
+    build:
+      context: ../../frontend
+    environment:
+      SERVICE_TOKEN: ${SERVICE_TOKEN:?}
+      BACKEND_BASE_URL: http://api:8000/api/v1
+      BACKEND_TIMEOUT_S: "10"
+      SECRET_KEY: ${FLASK_SECRET_KEY:?}
+      AI_SERVO_HOST: 0.0.0.0
+      AI_SERVO_PORT: "5000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    depends_on:
+      flask:
+        condition: service_started
