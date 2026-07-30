@@ -18,9 +18,11 @@ SimExecutor(pmsm_sim 數位孿生)套用並驗證,結果寫入 param_verify/。
     ENGINE_DATA_DIR      驗證報告輸出根目錄(預設 ./.data/engine)
     EXECUTOR_INTERVAL_S  輪詢間隔秒數(預設 30)
 
-執行身份:user_id=svc-executor, role=engineer。B4 完成後 engineer 已可讀取
-核准清單(DEPLOY_MODE=lite 下亦可由 engineer 核准);後端須以 lite 模式執行,
-否則 engineer 讀取 /approvals 會得到 403。
+執行身份:user_id=svc-executor, role=engineer。B4 起 approval.read 為 engineer
+的 baseline 授權,故 engineer 在 full 與 lite 兩種模式皆可讀取核准清單,
+executor 讀取 /approvals 不再受 DEPLOY_MODE 影響(不需再切 lite)。
+lite 模式額外允許 engineer 自行核准 param_tuning;full 模式下核准仍為 admin-only
+(但 executor 只讀取「已核准」的提案並套用,不參與核准,因此兩模式皆可運作)。
 """
 from __future__ import annotations
 
