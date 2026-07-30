@@ -66,8 +66,9 @@ def main() -> None:
     )
 
     # TODO(L2): dv_estimates 未來接 L2 的 EWMA / DOB 擾動扭矩估計。現固定示範值,
-    # 讓數位孿生在已知劣化工況(DV≈1600)下量測套參前後表現。
-    dv_estimates = {"M07": 1600.0}
+    # 讓數位孿生在已知劣化工況(DV≈1600)下量測套參前後表現。主線 demo 裝置為
+    # AXIS-04(app/domain/devices.py 的 DEFAULT_DEVICE);未列於此的裝置 dv=0(無載)。
+    dv_estimates = {"AXIS-04": 1600.0}
 
     print(
         f"[executor] start | api={base_url} | engine_dir={engine_dir} | "
