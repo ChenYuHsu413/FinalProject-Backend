@@ -176,9 +176,7 @@ APPROVE_CODE: dict[str, str] = {
 # list-wide, not scoped to their own proposals; they still cannot decide the types
 # they lack the approve code for. Per-type read scoping would change the read
 # endpoints' contract and is deliberately out of scope (D1.8).
-_LITE_ENGINEER_EXTRA: frozenset[str] = frozenset(
-    {MODEL_PROMOTE_APPROVE, PARAM_TUNE_APPROVE}
-)
+_LITE_ENGINEER_EXTRA: frozenset[str] = frozenset({MODEL_PROMOTE_APPROVE, PARAM_TUNE_APPROVE})
 
 _LITE_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     **ROLE_PERMISSIONS,
