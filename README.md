@@ -144,6 +144,8 @@ Engine endpoints read files under `ENGINE_DATA_DIR`; missing data / unknown
 scenario → documented **404**. In `MOCK_MODE` the worker generates the files and
 publishes events (channels `ai_servo:*`, §11 envelope).
 
+引擎層資料之上游 ML 管線參考:[`reference/ml_pipeline/`](reference/ml_pipeline/)。
+
 `/ui/snapshot`'s `dv` calls the external model service when `MODEL_SOURCE=http`
 and `MODEL_SERVICE_URL` is set; it degrades to the built-in generator on any
 failure, so the endpoint's contract and status codes are unchanged either way.

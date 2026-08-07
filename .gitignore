@@ -35,3 +35,8 @@ htmlcov/
 
 # docker compose bind-mount root for local dev (DATA_ROOT default)
 .data/
+
+# Reference ML pipeline: feature tables produced by following REPRODUCE_0997.md
+# are multi-MB derived data — never commit them; regenerate from the dataset.
+reference/ml_pipeline/*.csv
+reference/ml_pipeline/*.parquet
